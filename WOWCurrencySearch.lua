@@ -3,6 +3,24 @@ local ADDON_NAME = ...
 local searchText = ""
 local initialized = false
 
+local IsTokenUILoaded do
+    local addOnsAPI = C_AddOns or AddOns
+
+    if addOnsAPI and addOnsAPI.IsAddOnLoaded then
+        IsTokenUILoaded = function()
+            return addOnsAPI.IsAddOnLoaded("Blizzard_TokenUI")
+        end
+    elseif IsAddOnLoaded then
+        IsTokenUILoaded = function()
+            return IsAddOnLoaded("Blizzard_TokenUI")
+        end
+    else
+        IsTokenUILoaded = function()
+            return false
+        end
+    end
+end
+
 local function GetButtons()
     if not TokenFrameContainer then
         return nil
@@ -110,12 +128,12 @@ eventFrame:SetScript("OnEvent", function(_, event, name)
     end
 
     if name == ADDON_NAME or name == "Blizzard_TokenUI" then
-        if IsAddOnLoaded("Blizzard_TokenUI") then
+        if IsTokenUILoaded() then
             CreateSearchBox()
         end
     end
 end)
 
-if IsAddOnLoaded("Blizzard_TokenUI") then
+if IsTokenUILoaded() then
     CreateSearchBox()
 end
