@@ -1,5 +1,6 @@
 local ADDON_NAME = ...
 
+-- Normalize text so matching is accent-insensitive and tolerant of punctuation.
 local function Normalize(text)
     if not text then
         return ""
@@ -24,7 +25,7 @@ end
 local function SplitWords(query)
     local words = {}
 
-    for word in Normalize(query):gmatch("%S+") do
+    for word in (query or ""):gmatch("%S+") do
         table.insert(words, word)
     end
 
@@ -44,6 +45,7 @@ local function ContainsAllWords(text, words)
 end
 
 local function Matches(text, query)
+    -- Match empty queries so the full currency list is shown by default.
     local normalizedQuery = Normalize(query)
     if normalizedQuery == "" then
         return true
@@ -53,6 +55,8 @@ local function Matches(text, query)
 end
 
 local function NewDataProvider()
+    -- Dragonflight+ exposes CreateDataProvider; older clients can still build
+    -- one from DataProviderMixin.
     if type(CreateDataProvider) == "function" then
         return CreateDataProvider()
     end
@@ -68,6 +72,7 @@ local function EnumerateProvider(provider, callback)
     end
 
     if provider.Enumerate then
+        -- Some APIs enumerate as (index, value) while others yield only value.
         for a, b in provider:Enumerate() do
             local element = b
             if element == nil then
@@ -156,6 +161,8 @@ local function BuildFilteredProvider(query)
     end
 
     if normalizedQuery == "" then
+        -- Reuse the original provider when no query is active to preserve any
+        -- order and metadata managed by Blizzard's UI.
         return original
     end
 
@@ -196,6 +203,8 @@ local function RefreshOriginalProvider()
     end
 
     local currentProvider = State.scrollBox:GetDataProvider()
+    -- Only refresh our source provider while no filter is active; otherwise we
+    -- might accidentally treat a filtered provider as the authoritative source.
     if Normalize(State.query) == "" and currentProvider then
         State.originalProvider = currentProvider
     end
@@ -276,6 +285,8 @@ local function TryInstall()
     end
 
     if not tokenFrame:IsShown() then
+        -- The Token UI can exist before it is visible; delay setup until the
+        -- frame is actually shown so child controls are ready.
         tokenFrame:HookScript("OnShow", function()
             C_Timer.After(0, TryInstall)
         end)
@@ -324,6 +335,8 @@ eventFrame:RegisterEvent("CURRENCY_DISPLAY_UPDATE")
 eventFrame:SetScript("OnEvent", function(_, event, name)
     if event == "ADDON_LOADED" then
         if name == ADDON_NAME or name == "Blizzard_TokenUI" then
+            -- Try a few times because Blizzard's frame setup can finish across
+            -- multiple frames after ADDON_LOADED fires.
             C_Timer.After(0.5, TryInstall)
             C_Timer.After(1.5, TryInstall)
             C_Timer.After(3.0, TryInstall)
