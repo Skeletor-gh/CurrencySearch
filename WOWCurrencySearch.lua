@@ -79,8 +79,32 @@ local function ApplyFilter()
 end
 
 local function RefreshTokenFrame()
-    if TokenFrame and TokenFrame:IsShown() and TokenFrame_Update then
+    if not TokenFrame or not TokenFrame:IsShown() then
+        return
+    end
+
+    if type(TokenFrame_Update) == "function" then
         TokenFrame_Update()
+    elseif type(CurrencyFrame_Update) == "function" then
+        CurrencyFrame_Update()
+    else
+        ApplyFilter()
+    end
+end
+
+local function HookUpdateHandler()
+    if type(TokenFrame_Update) == "function" then
+        hooksecurefunc("TokenFrame_Update", ApplyFilter)
+        return
+    end
+
+    if type(CurrencyFrame_Update) == "function" then
+        hooksecurefunc("CurrencyFrame_Update", ApplyFilter)
+        return
+    end
+
+    if TokenFrame and type(TokenFrame.Update) == "function" then
+        hooksecurefunc(TokenFrame, "Update", ApplyFilter)
     end
 end
 
@@ -116,7 +140,9 @@ local function CreateSearchBox()
         searchText = ""
     end)
 
-    hooksecurefunc("TokenFrame_Update", ApplyFilter)
+    HookUpdateHandler()
+
+    TokenFrame:HookScript("OnShow", ApplyFilter)
 end
 
 local eventFrame = CreateFrame("Frame")
