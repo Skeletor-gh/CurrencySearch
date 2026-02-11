@@ -2,6 +2,20 @@ local ADDON_NAME = ...
 
 local searchText = ""
 local initialized = false
+local pendingFilterApply = false
+local ApplyFilter
+
+local filterFrame = CreateFrame("Frame")
+filterFrame:SetScript("OnUpdate", function()
+    if pendingFilterApply then
+        pendingFilterApply = false
+        ApplyFilter()
+    end
+end)
+
+local function ScheduleFilterApply()
+    pendingFilterApply = true
+end
 
 local IsTokenUILoaded do
     local addOnsAPI = C_AddOns or AddOns
@@ -57,7 +71,7 @@ local function ButtonMatches(button, query)
     return string.find(string.lower(nameText), query, 1, true) ~= nil
 end
 
-local function ApplyFilter()
+ApplyFilter = function()
     local query = string.lower(searchText or "")
 
     local buttons = GetButtons()
@@ -65,10 +79,19 @@ local function ApplyFilter()
         return
     end
 
+    local hasMatch = false
+
     for _, button in pairs(buttons) do
         if query == "" or ButtonMatches(button, query) then
             button:Show()
+            hasMatch = true
         else
+            button:Hide()
+        end
+    end
+
+    if query ~= "" and not hasMatch then
+        for _, button in pairs(buttons) do
             button:Hide()
         end
     end
@@ -83,9 +106,16 @@ local function RefreshTokenFrame()
         TokenFrame_Update()
     elseif type(CurrencyFrame_Update) == "function" then
         CurrencyFrame_Update()
+    elseif TokenFrame and type(TokenFrame.Update) == "function" then
+        TokenFrame:Update()
+    elseif TokenFrameContainer and type(TokenFrameContainer.Update) == "function" then
+        TokenFrameContainer:Update()
     else
         ApplyFilter()
+        return
     end
+
+    ScheduleFilterApply()
 end
 
 local function HookUpdateHandler()
@@ -101,6 +131,11 @@ local function HookUpdateHandler()
 
     if TokenFrame and type(TokenFrame.Update) == "function" then
         hooksecurefunc(TokenFrame, "Update", ApplyFilter)
+        return
+    end
+
+    if TokenFrameContainer and type(TokenFrameContainer.Update) == "function" then
+        hooksecurefunc(TokenFrameContainer, "Update", ApplyFilter)
     end
 end
 
@@ -131,6 +166,7 @@ local function CreateSearchBox()
             end
         end
 
+        ScheduleFilterApply()
         RefreshTokenFrame()
     end)
 
@@ -158,7 +194,7 @@ local function CreateSearchBox()
 
     HookUpdateHandler()
 
-    TokenFrame:HookScript("OnShow", ApplyFilter)
+    TokenFrame:HookScript("OnShow", ScheduleFilterApply)
 end
 
 local eventFrame = CreateFrame("Frame")
