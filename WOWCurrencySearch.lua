@@ -38,7 +38,7 @@ local function GetButtons()
 end
 
 local function ButtonMatches(button, query)
-    if not button or not button:IsShown() then
+    if not button then
         return false
     end
 
@@ -60,17 +60,13 @@ end
 local function ApplyFilter()
     local query = string.lower(searchText or "")
 
-    if query == "" then
-        return
-    end
-
     local buttons = GetButtons()
     if not buttons then
         return
     end
 
-    for _, button in ipairs(buttons) do
-        if ButtonMatches(button, query) then
+    for _, button in pairs(buttons) do
+        if query == "" or ButtonMatches(button, query) then
             button:Show()
         else
             button:Hide()
@@ -119,15 +115,35 @@ local function CreateSearchBox()
     editBox:SetSize(160, 20)
     editBox:SetPoint("TOPLEFT", TokenFrame, "TOPLEFT", 70, -35)
     editBox:SetAutoFocus(false)
-    --editBox.Instructions:SetText(SEARCH)
 
-    editBox:SetScript("OnTextChanged", function(self, userInput)
-        if not userInput then
-            return
+    if editBox.Instructions then
+        editBox.Instructions:SetText(SEARCH)
+    end
+
+    editBox:SetScript("OnTextChanged", function(self)
+        searchText = self:GetText() or ""
+
+        if self.Instructions then
+            if searchText == "" and not self:HasFocus() then
+                self.Instructions:Show()
+            else
+                self.Instructions:Hide()
+            end
         end
 
-        searchText = self:GetText() or ""
         RefreshTokenFrame()
+    end)
+
+    editBox:SetScript("OnEditFocusGained", function(self)
+        if self.Instructions then
+            self.Instructions:Hide()
+        end
+    end)
+
+    editBox:SetScript("OnEditFocusLost", function(self)
+        if self.Instructions and (self:GetText() or "") == "" then
+            self.Instructions:Show()
+        end
     end)
 
     editBox:SetScript("OnEscapePressed", function(self)
