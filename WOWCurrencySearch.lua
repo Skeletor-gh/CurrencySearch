@@ -117,9 +117,9 @@ local function CreateSearchBox()
 
     local editBox = CreateFrame("EditBox", "WOWCurrencySearchBox", TokenFrame, "SearchBoxTemplate")
     editBox:SetSize(160, 20)
-    editBox:SetPoint("TOPRIGHT", TokenFrame, "TOPRIGHT", -30, -30)
+    editBox:SetPoint("TOPLEFT", TokenFrame, "TOPLEFT", 70, -35)
     editBox:SetAutoFocus(false)
-    editBox.Instructions:SetText(SEARCH)
+    --editBox.Instructions:SetText(SEARCH)
 
     editBox:SetScript("OnTextChanged", function(self, userInput)
         if not userInput then
