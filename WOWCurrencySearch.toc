@@ -1,0 +1,8 @@
+## Interface: 120000
+## Title: WOWCurrencySearch
+## Notes: Adds a simple currency search box to the default currency pane.
+## Author: WOWCurrencySearch
+## Version: 1.0.0
+## LoadOnDemand: 0
+
+WOWCurrencySearch.lua
