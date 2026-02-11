@@ -1,21 +1,101 @@
 local ADDON_NAME = ...
 
-local searchText = ""
-local initialized = false
-local pendingFilterApply = false
-local ApplyFilter
-
-local filterFrame = CreateFrame("Frame")
-filterFrame:SetScript("OnUpdate", function()
-    if pendingFilterApply then
-        pendingFilterApply = false
-        ApplyFilter()
+local function Normalize(text)
+    if not text then
+        return ""
     end
-end)
 
-local function ScheduleFilterApply()
-    pendingFilterApply = true
+    local normalized = string.lower(text)
+    normalized = normalized
+        :gsub("[àáâä]", "a")
+        :gsub("[èéêë]", "e")
+        :gsub("[ìíîï]", "i")
+        :gsub("[òóôö]", "o")
+        :gsub("[ùúûü]", "u")
+        :gsub("ç", "c")
+        :gsub("[%'%’%-%_%.%,%:%;%(%)]", " ")
+        :gsub("^%s+", "")
+        :gsub("%s+$", "")
+        :gsub("%s+", " ")
+
+    return normalized
 end
+
+local function SplitWords(query)
+    local words = {}
+
+    for word in Normalize(query):gmatch("%S+") do
+        table.insert(words, word)
+    end
+
+    return words
+end
+
+local function ContainsAllWords(text, words)
+    local normalized = Normalize(text)
+
+    for _, word in ipairs(words) do
+        if not normalized:find(word, 1, true) then
+            return false
+        end
+    end
+
+    return true
+end
+
+local function Matches(text, query)
+    local normalizedQuery = Normalize(query)
+    if normalizedQuery == "" then
+        return true
+    end
+
+    return ContainsAllWords(text or "", SplitWords(normalizedQuery))
+end
+
+local function NewDataProvider()
+    if type(CreateDataProvider) == "function" then
+        return CreateDataProvider()
+    end
+
+    local provider = CreateFromMixins(DataProviderMixin)
+    provider:Init()
+    return provider
+end
+
+local function EnumerateProvider(provider, callback)
+    if not provider then
+        return
+    end
+
+    if provider.Enumerate then
+        for a, b in provider:Enumerate() do
+            local element = b
+            if element == nil then
+                element = a
+            end
+            callback(element)
+        end
+        return
+    end
+
+    if provider.GetSize and provider.GetElementData then
+        local size = provider:GetSize()
+        for i = 1, size do
+            callback(provider:GetElementData(i))
+        end
+    end
+end
+
+local State = {
+    installed = false,
+    installing = false,
+    query = "",
+    searchBox = nil,
+    clearButton = nil,
+    tokenFrame = nil,
+    scrollBox = nil,
+    originalProvider = nil,
+}
 
 local IsTokenUILoaded do
     local addOnsAPI = C_AddOns or AddOns
@@ -35,151 +115,112 @@ local IsTokenUILoaded do
     end
 end
 
-local function GetButtons()
-    if not TokenFrameContainer then
+local function FindTokenFrame()
+    return _G.TokenFrame or (_G.CharacterFrame and _G.CharacterFrame.TokenFrame)
+end
+
+local function FindScrollBox(tokenFrame)
+    if not tokenFrame then
         return nil
     end
 
-    if TokenFrameContainer.buttons then
-        return TokenFrameContainer.buttons
-    end
+    local candidates = {
+        tokenFrame.ScrollBox,
+        tokenFrame.TokenContainer and tokenFrame.TokenContainer.ScrollBox,
+        _G.TokenFrameContainer and _G.TokenFrameContainer.ScrollBox,
+    }
 
-    if TokenFrameContainer.ScrollBox and TokenFrameContainer.ScrollBox:GetFrames() then
-        return TokenFrameContainer.ScrollBox:GetFrames()
+    for _, candidate in ipairs(candidates) do
+        if candidate and candidate.SetDataProvider and candidate.GetDataProvider then
+            return candidate
+        end
     end
 
     return nil
 end
 
-local function ButtonMatches(button, query)
-    if not button then
-        return false
+local function GetTokenName(element)
+    if type(element) == "table" then
+        return element.name or element.currencyName
     end
 
-    local nameText
-
-    if button.name and button.name.GetText then
-        nameText = button.name:GetText()
-    elseif button.Name and button.Name.GetText then
-        nameText = button.Name:GetText()
-    end
-
-    if not nameText or nameText == "" then
-        return false
-    end
-
-    return string.find(string.lower(nameText), query, 1, true) ~= nil
+    return nil
 end
 
-ApplyFilter = function()
-    local query = string.lower(searchText or "")
+local function BuildFilteredProvider(query)
+    local original = State.originalProvider
+    local normalizedQuery = Normalize(query)
 
-    local buttons = GetButtons()
-    if not buttons then
-        return
+    if not original then
+        return nil
     end
 
-    local hasMatch = false
+    if normalizedQuery == "" then
+        return original
+    end
 
-    for _, button in pairs(buttons) do
-        if query == "" or ButtonMatches(button, query) then
-            button:Show()
-            hasMatch = true
-        else
-            button:Hide()
+    local filtered = NewDataProvider()
+
+    EnumerateProvider(original, function(element)
+        local name = GetTokenName(element)
+        if name and Matches(name, normalizedQuery) then
+            filtered:Insert(element)
         end
+    end)
+
+    return filtered
+end
+
+local function ApplyFilter()
+    if not State.scrollBox or not State.originalProvider then
+        return
     end
 
-    if query ~= "" and not hasMatch then
-        for _, button in pairs(buttons) do
-            button:Hide()
-        end
+    local provider = BuildFilteredProvider(State.query)
+    if not provider then
+        return
+    end
+
+    State.scrollBox:SetDataProvider(provider, ScrollBoxConstants.RetainScrollPosition)
+
+    if State.scrollBox.FullUpdate then
+        State.scrollBox:FullUpdate()
+    elseif State.scrollBox.Update then
+        State.scrollBox:Update()
     end
 end
 
-local function RefreshTokenFrame()
-    if not TokenFrame or not TokenFrame:IsShown() then
+local function RefreshOriginalProvider()
+    if not State.scrollBox then
         return
     end
 
-    if type(TokenFrame_Update) == "function" then
-        TokenFrame_Update()
-    elseif type(CurrencyFrame_Update) == "function" then
-        CurrencyFrame_Update()
-    elseif TokenFrame and type(TokenFrame.Update) == "function" then
-        TokenFrame:Update()
-    elseif TokenFrameContainer and type(TokenFrameContainer.Update) == "function" then
-        TokenFrameContainer:Update()
-    else
-        ApplyFilter()
-        return
-    end
-
-    ScheduleFilterApply()
-end
-
-local function HookUpdateHandler()
-    if type(TokenFrame_Update) == "function" then
-        hooksecurefunc("TokenFrame_Update", ApplyFilter)
-        return
-    end
-
-    if type(CurrencyFrame_Update) == "function" then
-        hooksecurefunc("CurrencyFrame_Update", ApplyFilter)
-        return
-    end
-
-    if TokenFrame and type(TokenFrame.Update) == "function" then
-        hooksecurefunc(TokenFrame, "Update", ApplyFilter)
-        return
-    end
-
-    if TokenFrameContainer and type(TokenFrameContainer.Update) == "function" then
-        hooksecurefunc(TokenFrameContainer, "Update", ApplyFilter)
+    local currentProvider = State.scrollBox:GetDataProvider()
+    if Normalize(State.query) == "" and currentProvider then
+        State.originalProvider = currentProvider
     end
 end
 
-local function CreateSearchBox()
-    if initialized or not TokenFrame then
-        return
-    end
-
-    initialized = true
-
-    local editBox = CreateFrame("EditBox", "WOWCurrencySearchBox", TokenFrame, "SearchBoxTemplate")
+local function CreateSearchUI(tokenFrame)
+    local editBox = CreateFrame("EditBox", "WOWCurrencySearchBox", tokenFrame, "InputBoxTemplate")
     editBox:SetSize(160, 20)
-    editBox:SetPoint("TOPLEFT", TokenFrame, "TOPLEFT", 70, -35)
+    editBox:SetPoint("TOPLEFT", tokenFrame, "TOPLEFT", 70, -35)
     editBox:SetAutoFocus(false)
+    editBox:SetTextInsets(8, 20, 0, 0)
 
-    if editBox.Instructions then
-        editBox.Instructions:SetText(SEARCH)
-    end
+    local clearButton = CreateFrame("Button", nil, tokenFrame, "UIPanelCloseButton")
+    clearButton:SetSize(18, 18)
+    clearButton:SetPoint("RIGHT", editBox, "RIGHT", 2, 0)
+
+    clearButton:SetScript("OnClick", function()
+        editBox:SetText("")
+        State.query = ""
+        ApplyFilter()
+    end)
 
     editBox:SetScript("OnTextChanged", function(self)
-        searchText = self:GetText() or ""
-
-        if self.Instructions then
-            if searchText == "" and not self:HasFocus() then
-                self.Instructions:Show()
-            else
-                self.Instructions:Hide()
-            end
-        end
-
-        ScheduleFilterApply()
-        RefreshTokenFrame()
-    end)
-
-    editBox:SetScript("OnEditFocusGained", function(self)
-        if self.Instructions then
-            self.Instructions:Hide()
-        end
-    end)
-
-    editBox:SetScript("OnEditFocusLost", function(self)
-        if self.Instructions and (self:GetText() or "") == "" then
-            self.Instructions:Show()
-        end
+        State.query = self:GetText() or ""
+        ApplyFilter()
     end)
 
     editBox:SetScript("OnEscapePressed", function(self)
@@ -187,31 +228,119 @@ local function CreateSearchBox()
         self:SetText("")
     end)
 
-    TokenFrame:HookScript("OnHide", function()
+    tokenFrame:HookScript("OnHide", function()
         editBox:SetText("")
-        searchText = ""
+        State.query = ""
     end)
 
-    HookUpdateHandler()
+    State.searchBox = editBox
+    State.clearButton = clearButton
+end
 
-    TokenFrame:HookScript("OnShow", ScheduleFilterApply)
+local function HookUpdateHandlers()
+    if type(TokenFrame_Update) == "function" then
+        hooksecurefunc("TokenFrame_Update", function()
+            RefreshOriginalProvider()
+            ApplyFilter()
+        end)
+        return
+    end
+
+    if type(CurrencyFrame_Update) == "function" then
+        hooksecurefunc("CurrencyFrame_Update", function()
+            RefreshOriginalProvider()
+            ApplyFilter()
+        end)
+        return
+    end
+
+    if State.tokenFrame and type(State.tokenFrame.Update) == "function" then
+        hooksecurefunc(State.tokenFrame, "Update", function()
+            RefreshOriginalProvider()
+            ApplyFilter()
+        end)
+    end
+end
+
+local function TryInstall()
+    if State.installed or State.installing then
+        return
+    end
+
+    State.installing = true
+
+    local tokenFrame = FindTokenFrame()
+    if not tokenFrame then
+        State.installing = false
+        return
+    end
+
+    if not tokenFrame:IsShown() then
+        tokenFrame:HookScript("OnShow", function()
+            C_Timer.After(0, TryInstall)
+        end)
+        State.installing = false
+        return
+    end
+
+    local scrollBox = FindScrollBox(tokenFrame)
+    if not scrollBox then
+        State.installing = false
+        C_Timer.After(0.3, TryInstall)
+        return
+    end
+
+    local provider = scrollBox:GetDataProvider()
+    if not provider then
+        State.installing = false
+        C_Timer.After(0.3, TryInstall)
+        return
+    end
+
+    State.tokenFrame = tokenFrame
+    State.scrollBox = scrollBox
+    State.originalProvider = provider
+
+    if not State.searchBox then
+        CreateSearchUI(tokenFrame)
+    end
+
+    HookUpdateHandlers()
+
+    tokenFrame:HookScript("OnShow", function()
+        RefreshOriginalProvider()
+        ApplyFilter()
+    end)
+
+    State.installed = true
+    State.installing = false
+    ApplyFilter()
 end
 
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("ADDON_LOADED")
+eventFrame:RegisterEvent("CURRENCY_DISPLAY_UPDATE")
 
 eventFrame:SetScript("OnEvent", function(_, event, name)
-    if event ~= "ADDON_LOADED" then
+    if event == "ADDON_LOADED" then
+        if name == ADDON_NAME or name == "Blizzard_TokenUI" then
+            C_Timer.After(0.5, TryInstall)
+            C_Timer.After(1.5, TryInstall)
+            C_Timer.After(3.0, TryInstall)
+        end
         return
     end
 
-    if name == ADDON_NAME or name == "Blizzard_TokenUI" then
-        if IsTokenUILoaded() then
-            CreateSearchBox()
+    if event == "CURRENCY_DISPLAY_UPDATE" then
+        if State.installed then
+            RefreshOriginalProvider()
+            if Normalize(State.query) ~= "" then
+                ApplyFilter()
+            end
         end
     end
 end)
 
 if IsTokenUILoaded() then
-    CreateSearchBox()
+    C_Timer.After(0, TryInstall)
 end
