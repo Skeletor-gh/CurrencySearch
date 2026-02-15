@@ -5,4 +5,4 @@
 ## Version: 1.0
 ## LoadOnDemand: 0
 
-WOWCurrencySearch.lua
+CurrencySearch.lua
