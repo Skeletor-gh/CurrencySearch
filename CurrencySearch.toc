@@ -4,5 +4,7 @@
 ## Author: Skeletor-gh
 ## Version: 1.0
 ## LoadOnDemand: 0
+## X-Category: Skeletor
+## Category: Skeletor
 
 CurrencySearch.lua
