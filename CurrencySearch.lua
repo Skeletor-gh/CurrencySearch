@@ -100,7 +100,13 @@ local State = {
     tokenFrame = nil,
     scrollBox = nil,
     originalProvider = nil,
+    pendingInstall = false,
+    pendingFilterRefresh = false,
 }
+
+local function IsInCombat()
+    return type(InCombatLockdown) == "function" and InCombatLockdown()
+end
 
 local IsTokenUILoaded do
     local addOnsAPI = C_AddOns or AddOns
@@ -179,6 +185,11 @@ local function BuildFilteredProvider(query)
 end
 
 local function ApplyFilter()
+    if IsInCombat() then
+        State.pendingFilterRefresh = true
+        return
+    end
+
     if not State.scrollBox or not State.originalProvider then
         return
     end
@@ -252,6 +263,11 @@ local function TryInstall()
         return
     end
 
+    if IsInCombat() then
+        State.pendingInstall = true
+        return
+    end
+
     State.installing = true
 
     local tokenFrame = FindTokenFrame()
@@ -306,6 +322,7 @@ end
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("CURRENCY_DISPLAY_UPDATE")
+eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 
 eventFrame:SetScript("OnEvent", function(_, event, name)
     if event == "ADDON_LOADED" then
@@ -325,6 +342,19 @@ eventFrame:SetScript("OnEvent", function(_, event, name)
             if Normalize(State.query) ~= "" then
                 ApplyFilter()
             end
+        end
+        return
+    end
+
+    if event == "PLAYER_REGEN_ENABLED" then
+        if State.pendingInstall then
+            State.pendingInstall = false
+            TryInstall()
+        end
+
+        if State.pendingFilterRefresh then
+            State.pendingFilterRefresh = false
+            ApplyFilter()
         end
     end
 end)
