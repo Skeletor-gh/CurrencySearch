@@ -344,7 +344,6 @@ local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("CURRENCY_DISPLAY_UPDATE")
 eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
-eventFrame:RegisterEvent("TOKEN_WATCH_UPDATE")
 
 eventFrame:SetScript("OnEvent", function(_, event, name)
     if event == "ADDON_LOADED" then
@@ -382,11 +381,6 @@ eventFrame:SetScript("OnEvent", function(_, event, name)
         return
     end
 
-    if event == "TOKEN_WATCH_UPDATE" then
-        if State.installed then
-            ApplyFilter()
-        end
-    end
 end)
 
 if IsTokenUILoaded() then
