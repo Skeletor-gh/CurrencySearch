@@ -107,10 +107,41 @@ local State = {
     tokenFrameWasShown = false,
     visibilityTicker = nil,
     transferWasActive = false,
+    disabledForTransferProtection = false,
+    disableNoticeShown = false,
 }
 
 local function IsInCombat()
     return type(InCombatLockdown) == "function" and InCombatLockdown()
+end
+
+local function IsRetailTransferSystemPresent()
+    if C_CurrencyInfo and type(C_CurrencyInfo.RequestCurrencyFromAccountCharacter) == "function" then
+        return true
+    end
+
+    if _G.AccountCurrencyTransferFrame or _G.CurrencyTransferMenu then
+        return true
+    end
+
+    return false
+end
+
+local function ShouldDisableForTaintSafety()
+    -- WoW's account-currency transfer flow runs through protected code paths.
+    -- Replacing TokenFrame's data provider can taint those paths, which then
+    -- blocks currency transfer actions. Prefer disabling the search filter over
+    -- risking ADDON_ACTION_FORBIDDEN errors.
+    return IsRetailTransferSystemPresent()
+end
+
+local function ShowDisableNoticeOnce()
+    if State.disableNoticeShown then
+        return
+    end
+
+    State.disableNoticeShown = true
+    print(string.format("%s: disabled filtering to avoid taint with account currency transfer.", ADDON_NAME))
 end
 
 local FindTokenFrame
@@ -232,6 +263,10 @@ end
 local ApplyFilter
 
 local function CanMutateCurrencyUI()
+    if State.disabledForTransferProtection then
+        return false
+    end
+
     return not IsInCombat() and not IsCurrencyTransferActive()
 end
 
@@ -490,6 +525,12 @@ local function TryInstall()
 
     if IsInCombat() then
         State.pendingInstall = true
+        return
+    end
+
+    if ShouldDisableForTaintSafety() then
+        State.disabledForTransferProtection = true
+        ShowDisableNoticeOnce()
         return
     end
 
