@@ -101,9 +101,14 @@ local State = {
     scrollBox = nil,
     originalProvider = nil,
     pendingInstall = false,
-    pendingFilterRefresh = false,
-    tokenFrameWasShown = false,
-    visibilityTicker = nil,
+    installRetryTicker = nil,
+    hooksInstalled = false,
+    pending = {
+        refreshOriginalProvider = false,
+        applyFilter = false,
+        restoreOriginalProvider = false,
+        resetQuery = false,
+    },
 }
 
 local function IsInCombat()
@@ -202,18 +207,22 @@ local function BuildFilteredProvider(query)
     return filtered
 end
 
+local function CanMutateCurrencyUI()
+    return not IsInCombat()
+        and not IsCurrencyTransferActive()
+        and State.installed
+        and State.tokenFrame
+        and State.tokenFrame:IsShown()
+        and State.scrollBox
+        and State.originalProvider
+end
+
 local function ApplyFilter()
-    if IsInCombat() or IsCurrencyTransferActive() then
-        State.pendingFilterRefresh = true
-
-        if State.scrollBox and State.originalProvider and State.scrollBox:GetDataProvider() ~= State.originalProvider then
-            State.scrollBox:SetDataProvider(State.originalProvider, ScrollBoxConstants.RetainScrollPosition)
-        end
-
+    if not State.scrollBox or not State.originalProvider then
         return
     end
 
-    if not State.scrollBox or not State.originalProvider then
+    if not CanMutateCurrencyUI() then
         return
     end
 
@@ -244,6 +253,8 @@ local function RefreshOriginalProvider()
     end
 end
 
+local QueueDeferredAction
+
 local function CreateSearchUI(tokenFrame)
     local editBox = CreateFrame("EditBox", nil, tokenFrame, "InputBoxTemplate")
     editBox:SetSize(140, 20)
@@ -258,12 +269,12 @@ local function CreateSearchUI(tokenFrame)
     clearButton:SetScript("OnClick", function()
         editBox:SetText("")
         State.query = ""
-        ApplyFilter()
+        QueueDeferredAction("applyFilter")
     end)
 
     editBox:SetScript("OnTextChanged", function(self)
         State.query = self:GetText() or ""
-        ApplyFilter()
+        QueueDeferredAction("applyFilter")
     end)
 
     editBox:SetScript("OnEscapePressed", function(self)
@@ -275,42 +286,94 @@ local function CreateSearchUI(tokenFrame)
     State.clearButton = clearButton
 end
 
-local function EnsureVisibilityWatcher()
-    if State.visibilityTicker then
+local function ProcessDeferredActions()
+    if not CanMutateCurrencyUI() then
         return
     end
 
-    State.visibilityTicker = C_Timer.NewTicker(0.2, function()
-        if not State.tokenFrame then
+    if State.pending.resetQuery then
+        State.pending.resetQuery = false
+        State.query = ""
+
+        if State.searchBox and State.searchBox.GetText and State.searchBox:GetText() ~= "" then
+            State.searchBox:SetText("")
+        end
+    end
+
+    if State.pending.restoreOriginalProvider then
+        State.pending.restoreOriginalProvider = false
+
+        if State.scrollBox:GetDataProvider() ~= State.originalProvider then
+            State.scrollBox:SetDataProvider(State.originalProvider, ScrollBoxConstants.RetainScrollPosition)
+        end
+    end
+
+    if State.pending.refreshOriginalProvider then
+        State.pending.refreshOriginalProvider = false
+        RefreshOriginalProvider()
+    end
+
+    if State.pending.applyFilter then
+        State.pending.applyFilter = false
+        ApplyFilter()
+    end
+end
+
+QueueDeferredAction = function(action)
+    if State.pending[action] == nil then
+        return
+    end
+
+    State.pending[action] = true
+    ProcessDeferredActions()
+end
+
+local function InstallTokenFrameHooks(tokenFrame)
+    if State.hooksInstalled or not tokenFrame or not tokenFrame.HookScript then
+        return
+    end
+
+    tokenFrame:HookScript("OnShow", function()
+        QueueDeferredAction("refreshOriginalProvider")
+        QueueDeferredAction("applyFilter")
+    end)
+
+    tokenFrame:HookScript("OnHide", function()
+        State.pending.resetQuery = true
+        State.pending.restoreOriginalProvider = true
+    end)
+
+    State.hooksInstalled = true
+end
+
+local TryInstall
+
+local function StopInstallRetryTicker()
+    if not State.installRetryTicker then
+        return
+    end
+
+    State.installRetryTicker:Cancel()
+    State.installRetryTicker = nil
+end
+
+local function StartInstallRetryTicker()
+    if State.installRetryTicker or State.installed then
+        return
+    end
+
+    State.installRetryTicker = C_Timer.NewTicker(0.5, function()
+        if State.installed then
+            StopInstallRetryTicker()
             return
         end
 
-        local isShown = State.tokenFrame.IsShown and State.tokenFrame:IsShown()
-        if isShown and not State.tokenFrameWasShown then
-            State.tokenFrameWasShown = true
-            RefreshOriginalProvider()
-            ApplyFilter()
-            return
-        end
-
-        if not isShown and State.tokenFrameWasShown then
-            State.tokenFrameWasShown = false
-
-            if State.searchBox and State.searchBox.GetText and State.searchBox:GetText() ~= "" then
-                State.searchBox:SetText("")
-            end
-
-            State.query = ""
-
-            if State.scrollBox and State.originalProvider and State.scrollBox:GetDataProvider() ~= State.originalProvider then
-                State.scrollBox:SetDataProvider(State.originalProvider, ScrollBoxConstants.RetainScrollPosition)
-            end
-        end
+        TryInstall()
     end)
 end
 
 
-local function TryInstall()
+TryInstall = function()
     if State.installed or State.installing then
         return
     end
@@ -325,28 +388,21 @@ local function TryInstall()
     local tokenFrame = FindTokenFrame()
     if not tokenFrame then
         State.installing = false
-        return
-    end
-
-    if not tokenFrame:IsShown() then
-        -- The Token UI can exist before it is visible; delay setup until the
-        -- frame is actually shown so child controls are ready.
-        C_Timer.After(0.3, TryInstall)
-        State.installing = false
+        StartInstallRetryTicker()
         return
     end
 
     local scrollBox = FindScrollBox(tokenFrame)
     if not scrollBox then
         State.installing = false
-        C_Timer.After(0.3, TryInstall)
+        StartInstallRetryTicker()
         return
     end
 
     local provider = scrollBox:GetDataProvider()
     if not provider then
         State.installing = false
-        C_Timer.After(0.3, TryInstall)
+        StartInstallRetryTicker()
         return
     end
 
@@ -357,13 +413,14 @@ local function TryInstall()
     if not State.searchBox then
         CreateSearchUI(tokenFrame)
     end
-
-    EnsureVisibilityWatcher()
-    State.tokenFrameWasShown = tokenFrame:IsShown()
+    InstallTokenFrameHooks(tokenFrame)
 
     State.installed = true
     State.installing = false
-    ApplyFilter()
+    StopInstallRetryTicker()
+
+    QueueDeferredAction("refreshOriginalProvider")
+    QueueDeferredAction("applyFilter")
 end
 
 local eventFrame = CreateFrame("Frame")
@@ -374,22 +431,21 @@ eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 eventFrame:SetScript("OnEvent", function(_, event, name)
     if event == "ADDON_LOADED" then
         if name == ADDON_NAME or name == "Blizzard_TokenUI" then
-            -- Try a few times because Blizzard's frame setup can finish across
-            -- multiple frames after ADDON_LOADED fires.
-            C_Timer.After(0.5, TryInstall)
-            C_Timer.After(1.5, TryInstall)
-            C_Timer.After(3.0, TryInstall)
+            TryInstall()
+            StartInstallRetryTicker()
         end
         return
     end
 
     if event == "CURRENCY_DISPLAY_UPDATE" then
-        if State.installed then
-            RefreshOriginalProvider()
-            if Normalize(State.query) ~= "" then
-                ApplyFilter()
-            end
+        if not State.installed then
+            TryInstall()
+            StartInstallRetryTicker()
+            return
         end
+
+        QueueDeferredAction("refreshOriginalProvider")
+        QueueDeferredAction("applyFilter")
         return
     end
 
@@ -397,12 +453,10 @@ eventFrame:SetScript("OnEvent", function(_, event, name)
         if State.pendingInstall then
             State.pendingInstall = false
             TryInstall()
+            StartInstallRetryTicker()
         end
 
-        if State.pendingFilterRefresh then
-            State.pendingFilterRefresh = false
-            ApplyFilter()
-        end
+        ProcessDeferredActions()
 
         return
     end
@@ -410,5 +464,6 @@ eventFrame:SetScript("OnEvent", function(_, event, name)
 end)
 
 if IsTokenUILoaded() then
-    C_Timer.After(0, TryInstall)
+    TryInstall()
+    StartInstallRetryTicker()
 end
