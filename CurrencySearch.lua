@@ -102,6 +102,7 @@ local State = {
     originalProvider = nil,
     pendingInstall = false,
     pendingFilterRefresh = false,
+    pendingRestoreOriginalProvider = false,
     tokenFrameWasShown = false,
     visibilityTicker = nil,
 }
@@ -124,6 +125,44 @@ local function IsCurrencyTransferActive()
     end
 
     return false
+end
+
+local ApplyFilter
+
+local function CanMutateCurrencyUI()
+    return not IsInCombat() and not IsCurrencyTransferActive()
+end
+
+local function RestoreOriginalProvider()
+    if not State.scrollBox or not State.originalProvider then
+        return false
+    end
+
+    if State.scrollBox:GetDataProvider() == State.originalProvider then
+        return true
+    end
+
+    State.scrollBox:SetDataProvider(State.originalProvider, ScrollBoxConstants.RetainScrollPosition)
+    return true
+end
+
+local function ProcessDeferredProviderMutations()
+    if not CanMutateCurrencyUI() then
+        return false
+    end
+
+    if State.pendingRestoreOriginalProvider then
+        if RestoreOriginalProvider() then
+            State.pendingRestoreOriginalProvider = false
+        end
+    end
+
+    if State.pendingFilterRefresh then
+        State.pendingFilterRefresh = false
+        ApplyFilter()
+    end
+
+    return true
 end
 
 local IsTokenUILoaded do
@@ -202,13 +241,10 @@ local function BuildFilteredProvider(query)
     return filtered
 end
 
-local function ApplyFilter()
-    if IsInCombat() or IsCurrencyTransferActive() then
+ApplyFilter = function()
+    if not CanMutateCurrencyUI() then
         State.pendingFilterRefresh = true
-
-        if State.scrollBox and State.originalProvider and State.scrollBox:GetDataProvider() ~= State.originalProvider then
-            State.scrollBox:SetDataProvider(State.originalProvider, ScrollBoxConstants.RetainScrollPosition)
-        end
+        State.pendingRestoreOriginalProvider = true
 
         return
     end
@@ -281,6 +317,8 @@ local function EnsureVisibilityWatcher()
     end
 
     State.visibilityTicker = C_Timer.NewTicker(0.2, function()
+        ProcessDeferredProviderMutations()
+
         if not State.tokenFrame then
             return
         end
@@ -302,8 +340,10 @@ local function EnsureVisibilityWatcher()
 
             State.query = ""
 
-            if State.scrollBox and State.originalProvider and State.scrollBox:GetDataProvider() ~= State.originalProvider then
-                State.scrollBox:SetDataProvider(State.originalProvider, ScrollBoxConstants.RetainScrollPosition)
+            if not CanMutateCurrencyUI() then
+                State.pendingRestoreOriginalProvider = true
+            else
+                RestoreOriginalProvider()
             end
         end
     end)
@@ -399,10 +439,7 @@ eventFrame:SetScript("OnEvent", function(_, event, name)
             TryInstall()
         end
 
-        if State.pendingFilterRefresh then
-            State.pendingFilterRefresh = false
-            ApplyFilter()
-        end
+        ProcessDeferredProviderMutations()
 
         return
     end
