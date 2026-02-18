@@ -1,3 +1,16 @@
-##Currency Search
-A very lightweight add-on for World of Warcraft which adds a simple search function on the currency pane. 
-Compatible with most other addons who also tinker with the same UI frame.
+## Currency Search
+
+A lightweight World of Warcraft add-on that adds a search box to the currency pane.
+
+### What this branch now includes
+
+This branch consolidates the latest stability improvements that were added in recent updates:
+
+- Safer filtering behavior while currency transfer mode is active.
+- Deferred UI/provider mutations during combat lockdown and transfer states.
+- Better Token UI load/install timing to avoid protected-function errors.
+- More resilient transfer-state detection across legacy and newer Token UI APIs.
+
+### Compatibility notes
+
+Currency Search avoids direct frame mutations during sensitive UI states and restores Blizzard's original data provider when needed, which improves coexistence with other add-ons that also interact with the currency frame.
