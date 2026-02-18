@@ -104,6 +104,7 @@ local State = {
     pendingFilterRefresh = false,
     tokenFrameWasShown = false,
     visibilityTicker = nil,
+    searchContainer = nil,
 }
 
 local function IsInCombat()
@@ -124,6 +125,10 @@ local function IsCurrencyTransferActive()
     end
 
     return false
+end
+
+local function IsSecureMutationBlocked()
+    return IsInCombat() or IsCurrencyTransferActive()
 end
 
 local IsTokenUILoaded do
@@ -203,7 +208,7 @@ local function BuildFilteredProvider(query)
 end
 
 local function ApplyFilter()
-    if IsInCombat() or IsCurrencyTransferActive() then
+    if IsSecureMutationBlocked() then
         State.pendingFilterRefresh = true
 
         if State.scrollBox and State.originalProvider and State.scrollBox:GetDataProvider() ~= State.originalProvider then
@@ -245,17 +250,29 @@ local function RefreshOriginalProvider()
 end
 
 local function CreateSearchUI(tokenFrame)
-    local editBox = CreateFrame("EditBox", nil, tokenFrame, "InputBoxTemplate")
+    local parentFrame = tokenFrame:GetParent() or tokenFrame
+    local searchContainer = CreateFrame("Frame", nil, parentFrame)
+    searchContainer:SetSize(170, 24)
+    searchContainer:SetPoint("TOPLEFT", tokenFrame, "TOPLEFT", 65, -33)
+    searchContainer:SetFrameStrata(tokenFrame:GetFrameStrata())
+    searchContainer:SetFrameLevel(tokenFrame:GetFrameLevel() + 5)
+
+    local editBox = CreateFrame("EditBox", nil, searchContainer, "InputBoxTemplate")
     editBox:SetSize(140, 20)
-    editBox:SetPoint("TOPLEFT", tokenFrame, "TOPLEFT", 70, -35)
+    editBox:SetPoint("TOPLEFT", searchContainer, "TOPLEFT", 0, 0)
     editBox:SetAutoFocus(false)
     editBox:SetTextInsets(8, 20, 0, 0)
 
-    local clearButton = CreateFrame("Button", nil, tokenFrame, "UIPanelCloseButton")
+    local clearButton = CreateFrame("Button", nil, searchContainer, "UIPanelCloseButton")
     clearButton:SetSize(18, 18)
     clearButton:SetPoint("RIGHT", editBox, "RIGHT", 2, 0)
 
     clearButton:SetScript("OnClick", function()
+        if IsSecureMutationBlocked() then
+            State.pendingFilterRefresh = true
+            return
+        end
+
         editBox:SetText("")
         State.query = ""
         ApplyFilter()
@@ -263,14 +280,27 @@ local function CreateSearchUI(tokenFrame)
 
     editBox:SetScript("OnTextChanged", function(self)
         State.query = self:GetText() or ""
+
+        if IsSecureMutationBlocked() then
+            State.pendingFilterRefresh = true
+            return
+        end
+
         ApplyFilter()
     end)
 
     editBox:SetScript("OnEscapePressed", function(self)
+        if IsSecureMutationBlocked() then
+            State.pendingFilterRefresh = true
+            return
+        end
+
         self:ClearFocus()
         self:SetText("")
     end)
 
+    State.searchContainer = searchContainer
+    searchContainer:SetShown(tokenFrame:IsShown())
     State.searchBox = editBox
     State.clearButton = clearButton
 end
@@ -286,6 +316,9 @@ local function EnsureVisibilityWatcher()
         end
 
         local isShown = State.tokenFrame.IsShown and State.tokenFrame:IsShown()
+        if State.searchContainer then
+            State.searchContainer:SetShown(isShown)
+        end
         if isShown and not State.tokenFrameWasShown then
             State.tokenFrameWasShown = true
             RefreshOriginalProvider()
@@ -384,6 +417,11 @@ eventFrame:SetScript("OnEvent", function(_, event, name)
     end
 
     if event == "CURRENCY_DISPLAY_UPDATE" then
+        if IsSecureMutationBlocked() then
+            State.pendingFilterRefresh = true
+            return
+        end
+
         if State.installed then
             RefreshOriginalProvider()
             if Normalize(State.query) ~= "" then
