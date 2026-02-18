@@ -108,6 +108,22 @@ local function IsInCombat()
     return type(InCombatLockdown) == "function" and InCombatLockdown()
 end
 
+local function IsCurrencyTransferActive()
+    local candidates = {
+        _G.CurrencyTransferMenu,
+        _G.TokenFramePopup,
+        _G.AccountCurrencyTransferFrame,
+    }
+
+    for _, frame in ipairs(candidates) do
+        if frame and frame.IsShown and frame:IsShown() then
+            return true
+        end
+    end
+
+    return false
+end
+
 local IsTokenUILoaded do
     local addOnsAPI = C_AddOns or AddOns
 
@@ -185,8 +201,13 @@ local function BuildFilteredProvider(query)
 end
 
 local function ApplyFilter()
-    if IsInCombat() then
+    if IsInCombat() or IsCurrencyTransferActive() then
         State.pendingFilterRefresh = true
+
+        if State.scrollBox and State.originalProvider and State.scrollBox:GetDataProvider() ~= State.originalProvider then
+            State.scrollBox:SetDataProvider(State.originalProvider, ScrollBoxConstants.RetainScrollPosition)
+        end
+
         return
     end
 
@@ -323,6 +344,7 @@ local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("CURRENCY_DISPLAY_UPDATE")
 eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+eventFrame:RegisterEvent("TOKEN_WATCH_UPDATE")
 
 eventFrame:SetScript("OnEvent", function(_, event, name)
     if event == "ADDON_LOADED" then
@@ -354,6 +376,14 @@ eventFrame:SetScript("OnEvent", function(_, event, name)
 
         if State.pendingFilterRefresh then
             State.pendingFilterRefresh = false
+            ApplyFilter()
+        end
+
+        return
+    end
+
+    if event == "TOKEN_WATCH_UPDATE" then
+        if State.installed then
             ApplyFilter()
         end
     end
