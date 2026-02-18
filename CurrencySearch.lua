@@ -106,6 +106,7 @@ local State = {
     pendingRestoreOriginalProvider = false,
     tokenFrameWasShown = false,
     visibilityTicker = nil,
+    transferWasActive = false,
 }
 
 local function IsInCombat()
@@ -225,21 +226,6 @@ local function IsCurrencyTransferActive()
         end
     end
 
-    for globalName, globalValue in pairs(_G) do
-        if type(globalName) == "string"
-            and type(globalValue) == "table"
-            and (globalName:find("CurrencyTransfer") or globalName:find("AccountCurrency")) then
-            if globalValue.IsShown and globalValue:IsShown() then
-                LogTransferDetection(string.format("dynamic global frame %s:IsShown()", globalName))
-                return true
-            end
-
-            if HasActiveTransferFlag(globalValue, globalName) then
-                return true
-            end
-        end
-    end
-
     return false
 end
 
@@ -279,6 +265,36 @@ local function ProcessDeferredProviderMutations()
     end
 
     return true
+end
+
+local function ResetFilterToDefault()
+    if State.query == "" then
+        return
+    end
+
+    State.query = ""
+
+    if State.searchBox and State.searchBox.GetText and State.searchBox:GetText() ~= "" then
+        State.searchBox:SetText("")
+    end
+
+    if not CanMutateCurrencyUI() then
+        State.pendingRestoreOriginalProvider = true
+        return
+    end
+
+    RestoreOriginalProvider()
+end
+
+local function HandleTransferStateChange()
+    local isActive = IsCurrencyTransferActive()
+    if isActive and not State.transferWasActive then
+        -- Transfer UI takes ownership of list interactions; always fall back to
+        -- unfiltered list so selected transfer currency remains untouched.
+        ResetFilterToDefault()
+    end
+
+    State.transferWasActive = isActive
 end
 
 local IsTokenUILoaded do
@@ -433,6 +449,7 @@ local function EnsureVisibilityWatcher()
     end
 
     State.visibilityTicker = C_Timer.NewTicker(0.2, function()
+        HandleTransferStateChange()
         ProcessDeferredProviderMutations()
 
         if not State.tokenFrame then
@@ -541,6 +558,7 @@ eventFrame:SetScript("OnEvent", function(_, event, name)
 
     if event == "CURRENCY_DISPLAY_UPDATE" then
         if State.installed then
+            HandleTransferStateChange()
             RefreshOriginalProvider()
             if Normalize(State.query) ~= "" then
                 ApplyFilter()
