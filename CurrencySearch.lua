@@ -107,7 +107,6 @@ local State = {
     tokenFrameWasShown = false,
     visibilityTicker = nil,
     transferWasActive = false,
-    disabledForTransferProtection = false,
     disableNoticeShown = false,
 }
 
@@ -115,33 +114,20 @@ local function IsInCombat()
     return type(InCombatLockdown) == "function" and InCombatLockdown()
 end
 
-local function IsRetailTransferSystemPresent()
-    if C_CurrencyInfo and type(C_CurrencyInfo.RequestCurrencyFromAccountCharacter) == "function" then
-        return true
-    end
-
-    if _G.AccountCurrencyTransferFrame or _G.CurrencyTransferMenu then
-        return true
-    end
-
-    return false
-end
-
 local function ShouldDisableForTaintSafety()
-    -- WoW's account-currency transfer flow runs through protected code paths.
-    -- Replacing TokenFrame's data provider can taint those paths, which then
-    -- blocks currency transfer actions. Prefer disabling the search filter over
-    -- risking ADDON_ACTION_FORBIDDEN errors.
-    return IsRetailTransferSystemPresent()
+    -- Optional emergency kill-switch for manual troubleshooting. Do not infer
+    -- disablement from API presence; runtime transfer/combat checks gate all
+    -- provider mutations.
+    return _G.CurrencySearchForceDisable == true
 end
 
-local function ShowDisableNoticeOnce()
+local function ShowMutationDeferredNoticeOnce()
     if State.disableNoticeShown then
         return
     end
 
     State.disableNoticeShown = true
-    print(string.format("%s: disabled filtering to avoid taint with account currency transfer.", ADDON_NAME))
+    print(string.format("%s: temporarily pausing currency filtering while protected transfer/combat state is active.", ADDON_NAME))
 end
 
 local FindTokenFrame
@@ -263,10 +249,6 @@ end
 local ApplyFilter
 
 local function CanMutateCurrencyUI()
-    if State.disabledForTransferProtection then
-        return false
-    end
-
     return not IsInCombat() and not IsCurrencyTransferActive()
 end
 
@@ -285,6 +267,9 @@ end
 
 local function ProcessDeferredProviderMutations()
     if not CanMutateCurrencyUI() then
+        if State.pendingRestoreOriginalProvider or State.pendingFilterRefresh then
+            ShowMutationDeferredNoticeOnce()
+        end
         return false
     end
 
@@ -315,6 +300,7 @@ local function ResetFilterToDefault()
 
     if not CanMutateCurrencyUI() then
         State.pendingRestoreOriginalProvider = true
+        ShowMutationDeferredNoticeOnce()
         return
     end
 
@@ -412,6 +398,7 @@ ApplyFilter = function()
     if not CanMutateCurrencyUI() then
         State.pendingFilterRefresh = true
         State.pendingRestoreOriginalProvider = true
+        ShowMutationDeferredNoticeOnce()
 
         return
     end
@@ -529,8 +516,6 @@ local function TryInstall()
     end
 
     if ShouldDisableForTaintSafety() then
-        State.disabledForTransferProtection = true
-        ShowDisableNoticeOnce()
         return
     end
 
