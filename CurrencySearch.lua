@@ -108,6 +108,7 @@ local State = {
     visibilityTicker = nil,
     transferWasActive = false,
     disableNoticeShown = false,
+    mutationPauseActive = false,
 }
 
 local function IsInCombat()
@@ -128,6 +129,19 @@ local function ShowMutationDeferredNoticeOnce()
 
     State.disableNoticeShown = true
     print(string.format("%s: temporarily pausing currency filtering while protected transfer/combat state is active.", ADDON_NAME))
+end
+
+local function UpdateMutationPauseState(isPaused)
+    if isPaused then
+        if not State.mutationPauseActive then
+            State.mutationPauseActive = true
+            State.disableNoticeShown = false
+        end
+        return
+    end
+
+    State.mutationPauseActive = false
+    State.disableNoticeShown = false
 end
 
 local FindTokenFrame
@@ -267,11 +281,14 @@ end
 
 local function ProcessDeferredProviderMutations()
     if not CanMutateCurrencyUI() then
+        UpdateMutationPauseState(true)
         if State.pendingRestoreOriginalProvider or State.pendingFilterRefresh then
             ShowMutationDeferredNoticeOnce()
         end
         return false
     end
+
+    UpdateMutationPauseState(false)
 
     if State.pendingRestoreOriginalProvider then
         if RestoreOriginalProvider() then
@@ -309,10 +326,11 @@ end
 
 local function HandleTransferStateChange()
     local isActive = IsCurrencyTransferActive()
-    if isActive and not State.transferWasActive then
-        -- Transfer UI takes ownership of list interactions; always fall back to
-        -- unfiltered list so selected transfer currency remains untouched.
-        ResetFilterToDefault()
+    if isActive and not State.transferWasActive and Normalize(State.query) ~= "" then
+        -- Keep the user's query/UI text untouched while transfer mode is
+        -- active, and refresh it automatically when protected state ends.
+        State.pendingFilterRefresh = true
+        ShowMutationDeferredNoticeOnce()
     end
 
     State.transferWasActive = isActive
@@ -396,12 +414,14 @@ end
 
 ApplyFilter = function()
     if not CanMutateCurrencyUI() then
+        UpdateMutationPauseState(true)
         State.pendingFilterRefresh = true
-        State.pendingRestoreOriginalProvider = true
         ShowMutationDeferredNoticeOnce()
 
         return
     end
+
+    UpdateMutationPauseState(false)
 
     if not State.scrollBox or not State.originalProvider then
         return
@@ -527,9 +547,13 @@ local function TryInstall()
         return
     end
 
+    if not State.searchBox then
+        CreateSearchUI(tokenFrame)
+    end
+
     if not tokenFrame:IsShown() then
-        -- The Token UI can exist before it is visible; delay setup until the
-        -- frame is actually shown so child controls are ready.
+        -- TokenFrame can exist before scroll data exists; keep retrying the
+        -- provider wiring while allowing the search UI to be created now.
         C_Timer.After(0.3, TryInstall)
         State.installing = false
         return
@@ -552,10 +576,6 @@ local function TryInstall()
     State.tokenFrame = tokenFrame
     State.scrollBox = scrollBox
     State.originalProvider = provider
-
-    if not State.searchBox then
-        CreateSearchUI(tokenFrame)
-    end
 
     EnsureVisibilityWatcher()
     State.tokenFrameWasShown = tokenFrame:IsShown()
