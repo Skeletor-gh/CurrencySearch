@@ -112,6 +112,8 @@ local State = {
     disableNoticeShown = false,
     mutationPauseActive = false,
     strictModeBlockNoticeShown = false,
+    transferAutoDisabled = false,
+    transferAutoDisableNoticeShown = false,
 }
 
 local function IsInCombat()
@@ -180,6 +182,18 @@ local function ShowMutationDeferredNoticeOnce()
     print(string.format("%s: temporarily pausing currency filtering while protected transfer/combat state is active.", ADDON_NAME))
 end
 
+local function ShowTransferAutoDisableNoticeOnce()
+    if State.transferAutoDisableNoticeShown then
+        return
+    end
+
+    State.transferAutoDisableNoticeShown = true
+    print(string.format(
+        "%s: account currency transfer detected; closing the currency frame and disabling CurrencySearch for this session to avoid taint.",
+        ADDON_NAME
+    ))
+end
+
 local function UpdateMutationPauseState(isPaused)
     if isPaused then
         if not State.mutationPauseActive then
@@ -194,6 +208,7 @@ local function UpdateMutationPauseState(isPaused)
 end
 
 local FindTokenFrame
+local eventFrame
 
 local lastTransferDebugReason
 
@@ -312,7 +327,60 @@ end
 local ApplyFilter
 
 local function CanMutateCurrencyUI()
-    return not IsInCombat() and not IsCurrencyTransferActive()
+    return not State.transferAutoDisabled and not IsInCombat() and not IsCurrencyTransferActive()
+end
+
+local function UninstallForTransferSafety()
+    if State.transferAutoDisabled then
+        return
+    end
+
+    State.transferAutoDisabled = true
+    State.pendingInstall = false
+    State.pendingFilterRefresh = false
+    State.pendingRestoreOriginalProvider = false
+    State.transferWasActive = true
+
+    if State.searchBox and State.searchBox.GetText and State.searchBox:GetText() ~= "" then
+        State.searchBox:SetText("")
+    end
+
+    State.query = ""
+
+    if State.scrollBox and State.originalProvider and State.scrollBox:GetDataProvider() ~= State.originalProvider then
+        State.scrollBox:SetDataProvider(State.originalProvider, ScrollBoxConstants.RetainScrollPosition)
+    end
+
+    if State.visibilityTicker then
+        State.visibilityTicker:Cancel()
+        State.visibilityTicker = nil
+    end
+
+    if eventFrame then
+        eventFrame:UnregisterAllEvents()
+    end
+
+    local frameToHide = State.tokenFrame or FindTokenFrame() or _G.TokenFrame
+    if frameToHide and frameToHide.IsShown and frameToHide:IsShown() then
+        if type(HideUIPanel) == "function" then
+            HideUIPanel(frameToHide)
+        else
+            frameToHide:Hide()
+        end
+    end
+
+    if _G.CharacterFrame and _G.CharacterFrame.IsShown and _G.CharacterFrame:IsShown() then
+        if type(HideUIPanel) == "function" then
+            HideUIPanel(_G.CharacterFrame)
+        else
+            _G.CharacterFrame:Hide()
+        end
+    end
+
+    State.installed = false
+    State.installing = false
+
+    ShowTransferAutoDisableNoticeOnce()
 end
 
 local function RestoreOriginalProvider()
@@ -375,6 +443,10 @@ end
 
 local function HandleTransferStateChange()
     local isActive = IsCurrencyTransferActive()
+    if isActive then
+        UninstallForTransferSafety()
+    end
+
     if isActive and not State.transferWasActive and Normalize(State.query) ~= "" then
         -- Keep the user's query/UI text untouched while transfer mode is
         -- active, and refresh it automatically when protected state ends.
@@ -591,6 +663,10 @@ local function TryInstall()
         return
     end
 
+    if State.transferAutoDisabled then
+        return
+    end
+
     if IsInCombat() then
         State.pendingInstall = true
         return
@@ -650,6 +726,10 @@ local function TryInstall()
 end
 
 local function ReevaluateModeState()
+    if State.transferAutoDisabled then
+        return
+    end
+
     if ShouldDisableForTaintSafety() then
         if State.searchBox and State.searchBox.GetText and State.searchBox:GetText() ~= "" then
             State.searchBox:SetText("")
@@ -708,7 +788,7 @@ SlashCmdList.CURRENCYSEARCH = function(message)
     ReevaluateModeState()
 end
 
-local eventFrame = CreateFrame("Frame")
+eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("CURRENCY_DISPLAY_UPDATE")
 eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
