@@ -1,4 +1,5 @@
 local ADDON_NAME = ...
+local DEBUG_TRANSFER_DETECTION = false
 
 -- Normalize text so matching is accent-insensitive and tolerant of punctuation.
 local function Normalize(text)
@@ -110,7 +111,74 @@ local function IsInCombat()
     return type(InCombatLockdown) == "function" and InCombatLockdown()
 end
 
+local FindTokenFrame
+
+local lastTransferDebugReason
+
+local function LogTransferDetection(reason)
+    if not DEBUG_TRANSFER_DETECTION then
+        return
+    end
+
+    if lastTransferDebugReason == reason then
+        return
+    end
+
+    lastTransferDebugReason = reason
+    print(string.format("%s: transfer state detected via %s", ADDON_NAME, reason))
+end
+
+local function SafeCall(method, target)
+    if type(method) ~= "function" then
+        return false
+    end
+
+    local ok, result = pcall(method, target)
+    return ok and result == true
+end
+
+local function HasActiveTransferFlag(target, sourceLabel)
+    if type(target) ~= "table" then
+        return false
+    end
+
+    local methodNames = {
+        "IsCurrencyTransferActive",
+        "IsCurrencyTransferModeActive",
+        "IsAccountCurrencyTransferActive",
+        "IsAccountTransferModeActive",
+        "IsTransferModeActive",
+        "IsInTransferMode",
+    }
+
+    for _, methodName in ipairs(methodNames) do
+        if SafeCall(target[methodName], target) then
+            LogTransferDetection(string.format("%s:%s()", sourceLabel, methodName))
+            return true
+        end
+    end
+
+    local fieldNames = {
+        "isCurrencyTransferActive",
+        "isCurrencyTransferMode",
+        "isAccountCurrencyTransferActive",
+        "isAccountTransferMode",
+        "isTransferModeActive",
+        "isInTransferMode",
+    }
+
+    for _, fieldName in ipairs(fieldNames) do
+        if target[fieldName] == true then
+            LogTransferDetection(string.format("%s.%s", sourceLabel, fieldName))
+            return true
+        end
+    end
+
+    return false
+end
+
 local function IsCurrencyTransferActive()
+    -- Keep the legacy frame checks, but layer on newer Token UI state checks.
     local candidates = {
         _G.CurrencyTransferMenu,
         _G.TokenFramePopup,
@@ -119,7 +187,55 @@ local function IsCurrencyTransferActive()
 
     for _, frame in ipairs(candidates) do
         if frame and frame.IsShown and frame:IsShown() then
+            LogTransferDetection("legacy visible transfer frame")
             return true
+        end
+    end
+
+    local tokenFrame = FindTokenFrame()
+    local tokenUICandidates = {
+        tokenFrame,
+        tokenFrame and tokenFrame.CurrencyTransferMenu,
+        tokenFrame and tokenFrame.TransferMenu,
+        tokenFrame and tokenFrame.AccountStorePanel,
+        _G.AccountCurrencyTransferFrame,
+        _G.CurrencyTransferMenu,
+    }
+
+    for _, candidate in ipairs(tokenUICandidates) do
+        if HasActiveTransferFlag(candidate, "TokenUI") then
+            return true
+        end
+    end
+
+    if C_CurrencyInfo then
+        local apiPredicates = {
+            "IsCurrencyTransferActive",
+            "IsAccountCurrencyTransferActive",
+            "IsAccountCharacterCurrencyTransferActive",
+            "IsCurrencyTransferModeActive",
+        }
+
+        for _, predicateName in ipairs(apiPredicates) do
+            if SafeCall(C_CurrencyInfo[predicateName], C_CurrencyInfo) then
+                LogTransferDetection(string.format("C_CurrencyInfo.%s()", predicateName))
+                return true
+            end
+        end
+    end
+
+    for globalName, globalValue in pairs(_G) do
+        if type(globalName) == "string"
+            and type(globalValue) == "table"
+            and (globalName:find("CurrencyTransfer") or globalName:find("AccountCurrency")) then
+            if globalValue.IsShown and globalValue:IsShown() then
+                LogTransferDetection(string.format("dynamic global frame %s:IsShown()", globalName))
+                return true
+            end
+
+            if HasActiveTransferFlag(globalValue, globalName) then
+                return true
+            end
         end
     end
 
@@ -144,7 +260,7 @@ local IsTokenUILoaded do
     end
 end
 
-local function FindTokenFrame()
+FindTokenFrame = function()
     return _G.TokenFrame or (_G.CharacterFrame and _G.CharacterFrame.TokenFrame)
 end
 
