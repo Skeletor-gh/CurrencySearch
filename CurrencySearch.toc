@@ -4,6 +4,7 @@
 ## Author: Skeletor-gh
 ## Version: 1.0
 ## LoadOnDemand: 0
+## SavedVariables: CurrencySearchDB
 ## X-Category: Skeletor
 ## Category: Skeletor
 

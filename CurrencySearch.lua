@@ -1,5 +1,7 @@
 local ADDON_NAME = ...
 local DEBUG_TRANSFER_DETECTION = false
+local MODE_STRICT = "strict"
+local MODE_COMPAT = "compat"
 
 -- Normalize text so matching is accent-insensitive and tolerant of punctuation.
 local function Normalize(text)
@@ -109,6 +111,7 @@ local State = {
     transferWasActive = false,
     disableNoticeShown = false,
     mutationPauseActive = false,
+    strictModeBlockNoticeShown = false,
 }
 
 local function IsInCombat()
@@ -116,10 +119,56 @@ local function IsInCombat()
 end
 
 local function ShouldDisableForTaintSafety()
-    -- Optional emergency kill-switch for manual troubleshooting. Do not infer
-    -- disablement from API presence; runtime transfer/combat checks gate all
-    -- provider mutations.
-    return _G.CurrencySearchForceDisable == true
+    if _G.CurrencySearchForceDisable == true then
+        return true
+    end
+
+    if not CurrencySearchDB or CurrencySearchDB.mode ~= MODE_STRICT then
+        return false
+    end
+
+    if not C_CurrencyInfo then
+        return false
+    end
+
+    local strictModeRiskApis = {
+        "IsAccountCurrencyTransferActive",
+        "IsAccountCharacterCurrencyTransferActive",
+        "IsCurrencyTransferModeActive",
+    }
+
+    for _, apiName in ipairs(strictModeRiskApis) do
+        if type(C_CurrencyInfo[apiName]) == "function" then
+            return true
+        end
+    end
+
+    return false
+end
+
+local function GetCurrentMode()
+    if not CurrencySearchDB then
+        CurrencySearchDB = {}
+    end
+
+    if CurrencySearchDB.mode ~= MODE_COMPAT and CurrencySearchDB.mode ~= MODE_STRICT then
+        CurrencySearchDB.mode = MODE_STRICT
+    end
+
+    return CurrencySearchDB.mode
+end
+
+
+local function ShowStrictModeBlockNoticeOnce()
+    if State.strictModeBlockNoticeShown then
+        return
+    end
+
+    State.strictModeBlockNoticeShown = true
+    print(string.format(
+        "%s: strict mode is active; filtering install is disabled on clients with account-currency transfer APIs to reduce taint risk. Use /currencysearch mode compat to allow filtering (higher taint risk).",
+        ADDON_NAME
+    ))
 end
 
 local function ShowMutationDeferredNoticeOnce()
@@ -413,6 +462,18 @@ local function BuildFilteredProvider(query)
 end
 
 ApplyFilter = function()
+    if ShouldDisableForTaintSafety() then
+        ShowStrictModeBlockNoticeOnce()
+        if not CanMutateCurrencyUI() then
+            State.pendingRestoreOriginalProvider = true
+            ShowMutationDeferredNoticeOnce()
+            return
+        end
+
+        RestoreOriginalProvider()
+        return
+    end
+
     if not CanMutateCurrencyUI() then
         UpdateMutationPauseState(true)
         State.pendingFilterRefresh = true
@@ -536,8 +597,11 @@ local function TryInstall()
     end
 
     if ShouldDisableForTaintSafety() then
+        ShowStrictModeBlockNoticeOnce()
         return
     end
+
+    State.strictModeBlockNoticeShown = false
 
     State.installing = true
 
@@ -585,6 +649,65 @@ local function TryInstall()
     ApplyFilter()
 end
 
+local function ReevaluateModeState()
+    if ShouldDisableForTaintSafety() then
+        if State.searchBox and State.searchBox.GetText and State.searchBox:GetText() ~= "" then
+            State.searchBox:SetText("")
+        end
+        State.query = ""
+
+        if not CanMutateCurrencyUI() then
+            State.pendingRestoreOriginalProvider = true
+            ShowMutationDeferredNoticeOnce()
+            return
+        end
+
+        RestoreOriginalProvider()
+        return
+    end
+
+    TryInstall()
+
+    if State.installed then
+        ApplyFilter()
+    end
+end
+
+SLASH_CURRENCYSEARCH1 = "/currencysearch"
+SlashCmdList.CURRENCYSEARCH = function(message)
+    local normalized = Normalize(message or "")
+    local command, value = normalized:match("^(%S+)%s*(.-)$")
+
+    if command ~= "mode" then
+        print(string.format("%s: usage: /currencysearch mode strict|compat", ADDON_NAME))
+        return
+    end
+
+    if value ~= MODE_STRICT and value ~= MODE_COMPAT then
+        print(string.format("%s: unknown mode '%s'. Expected strict or compat.", ADDON_NAME, value ~= "" and value or ""))
+        return
+    end
+
+    local currentMode = GetCurrentMode()
+    if currentMode == value then
+        print(string.format("%s: mode already set to %s.", ADDON_NAME, value))
+        return
+    end
+
+    CurrencySearchDB.mode = value
+
+    if value == MODE_COMPAT then
+        print(string.format(
+            "%s: compatibility mode enabled. Filtering is allowed with combat/transfer guards, but this increases the risk of taint (including ADDON_ACTION_FORBIDDEN during transfer UI interactions).",
+            ADDON_NAME
+        ))
+    else
+        print(string.format("%s: strict mode enabled. Conservative taint-safety install gating is active.", ADDON_NAME))
+    end
+
+    ReevaluateModeState()
+end
+
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("CURRENCY_DISPLAY_UPDATE")
@@ -629,3 +752,5 @@ end)
 if IsTokenUILoaded() then
     C_Timer.After(0, TryInstall)
 end
+
+GetCurrentMode()
