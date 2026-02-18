@@ -102,6 +102,8 @@ local State = {
     originalProvider = nil,
     pendingInstall = false,
     pendingFilterRefresh = false,
+    tokenFrameWasShown = false,
+    visibilityTicker = nil,
 }
 
 local function IsInCombat()
@@ -269,13 +271,42 @@ local function CreateSearchUI(tokenFrame)
         self:SetText("")
     end)
 
-    tokenFrame:HookScript("OnHide", function()
-        editBox:SetText("")
-        State.query = ""
-    end)
-
     State.searchBox = editBox
     State.clearButton = clearButton
+end
+
+local function EnsureVisibilityWatcher()
+    if State.visibilityTicker then
+        return
+    end
+
+    State.visibilityTicker = C_Timer.NewTicker(0.2, function()
+        if not State.tokenFrame then
+            return
+        end
+
+        local isShown = State.tokenFrame.IsShown and State.tokenFrame:IsShown()
+        if isShown and not State.tokenFrameWasShown then
+            State.tokenFrameWasShown = true
+            RefreshOriginalProvider()
+            ApplyFilter()
+            return
+        end
+
+        if not isShown and State.tokenFrameWasShown then
+            State.tokenFrameWasShown = false
+
+            if State.searchBox and State.searchBox.GetText and State.searchBox:GetText() ~= "" then
+                State.searchBox:SetText("")
+            end
+
+            State.query = ""
+
+            if State.scrollBox and State.originalProvider and State.scrollBox:GetDataProvider() ~= State.originalProvider then
+                State.scrollBox:SetDataProvider(State.originalProvider, ScrollBoxConstants.RetainScrollPosition)
+            end
+        end
+    end)
 end
 
 
@@ -300,9 +331,7 @@ local function TryInstall()
     if not tokenFrame:IsShown() then
         -- The Token UI can exist before it is visible; delay setup until the
         -- frame is actually shown so child controls are ready.
-        tokenFrame:HookScript("OnShow", function()
-            C_Timer.After(0, TryInstall)
-        end)
+        C_Timer.After(0.3, TryInstall)
         State.installing = false
         return
     end
@@ -329,11 +358,8 @@ local function TryInstall()
         CreateSearchUI(tokenFrame)
     end
 
-
-    tokenFrame:HookScript("OnShow", function()
-        RefreshOriginalProvider()
-        ApplyFilter()
-    end)
+    EnsureVisibilityWatcher()
+    State.tokenFrameWasShown = tokenFrame:IsShown()
 
     State.installed = true
     State.installing = false
