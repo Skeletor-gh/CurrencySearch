@@ -54,43 +54,6 @@ local function Matches(text, query)
     return ContainsAllWords(text or "", SplitWords(normalizedQuery))
 end
 
-local function NewDataProvider()
-    -- Dragonflight+ exposes CreateDataProvider; older clients can still build
-    -- one from DataProviderMixin.
-    if type(CreateDataProvider) == "function" then
-        return CreateDataProvider()
-    end
-
-    local provider = CreateFromMixins(DataProviderMixin)
-    provider:Init()
-    return provider
-end
-
-local function EnumerateProvider(provider, callback)
-    if not provider then
-        return
-    end
-
-    if provider.Enumerate then
-        -- Some APIs enumerate as (index, value) while others yield only value.
-        for a, b in provider:Enumerate() do
-            local element = b
-            if element == nil then
-                element = a
-            end
-            callback(element)
-        end
-        return
-    end
-
-    if provider.GetSize and provider.GetElementData then
-        local size = provider:GetSize()
-        for i = 1, size do
-            callback(provider:GetElementData(i))
-        end
-    end
-end
-
 local State = {
     installed = false,
     installing = false,
@@ -100,6 +63,8 @@ local State = {
     tokenFrame = nil,
     scrollBox = nil,
     originalProvider = nil,
+    view = nil,
+    originalPredicate = nil,
     pendingInstall = false,
     pendingFilterRefresh = false,
     tokenFrameWasShown = false,
@@ -176,53 +141,79 @@ local function GetTokenName(element)
     return nil
 end
 
-local function BuildFilteredProvider(query)
-    local original = State.originalProvider
-    local normalizedQuery = Normalize(query)
-
-    if not original then
+local function GetScrollView(scrollBox)
+    if not scrollBox then
         return nil
     end
 
-    if normalizedQuery == "" then
-        -- Reuse the original provider when no query is active to preserve any
-        -- order and metadata managed by Blizzard's UI.
-        return original
+    if scrollBox.GetView then
+        return scrollBox:GetView()
     end
 
-    local filtered = NewDataProvider()
+    return scrollBox.view or scrollBox.ScrollView
+end
 
-    EnumerateProvider(original, function(element)
-        local name = GetTokenName(element)
-        if name and Matches(name, normalizedQuery) then
-            filtered:Insert(element)
+local function BuildPredicate(query)
+    local normalizedQuery = Normalize(query)
+
+    if normalizedQuery == "" then
+        return State.originalPredicate
+    end
+
+    return function(elementData)
+        if State.originalPredicate and not State.originalPredicate(elementData) then
+            return false
         end
-    end)
 
-    return filtered
+        local name = GetTokenName(elementData)
+        return name and Matches(name, normalizedQuery) or false
+    end
+end
+
+local function SetViewPredicate(view, predicate)
+    if not view then
+        return false
+    end
+
+    if view.SetElementPredicate then
+        view:SetElementPredicate(predicate)
+        return true
+    end
+
+    if view.SetFilterPredicate then
+        view:SetFilterPredicate(predicate)
+        return true
+    end
+
+    if view.SetDataProviderPredicate then
+        view:SetDataProviderPredicate(predicate)
+        return true
+    end
+
+    return false
 end
 
 local function ApplyFilter()
     if IsInCombat() or IsCurrencyTransferActive() then
         State.pendingFilterRefresh = true
 
-        if State.scrollBox and State.originalProvider and State.scrollBox:GetDataProvider() ~= State.originalProvider then
-            State.scrollBox:SetDataProvider(State.originalProvider, ScrollBoxConstants.RetainScrollPosition)
-        end
-
         return
     end
 
-    if not State.scrollBox or not State.originalProvider then
+    if not State.scrollBox or not State.originalProvider or not State.view then
         return
     end
 
-    local provider = BuildFilteredProvider(State.query)
-    if not provider then
-        return
+    if State.scrollBox:GetDataProvider() ~= State.originalProvider then
+        -- Never hold a replacement provider; always keep Blizzard's provider
+        -- bound to preserve protected selection/element ownership.
+        State.scrollBox:SetDataProvider(State.originalProvider, ScrollBoxConstants.RetainScrollPosition)
     end
 
-    State.scrollBox:SetDataProvider(provider, ScrollBoxConstants.RetainScrollPosition)
+    local applied = SetViewPredicate(State.view, BuildPredicate(State.query))
+    if not applied then
+        return
+    end
 
     if State.scrollBox.FullUpdate then
         State.scrollBox:FullUpdate()
@@ -241,6 +232,17 @@ local function RefreshOriginalProvider()
     -- might accidentally treat a filtered provider as the authoritative source.
     if Normalize(State.query) == "" and currentProvider then
         State.originalProvider = currentProvider
+        State.view = GetScrollView(State.scrollBox)
+
+        if State.view and State.originalPredicate == nil then
+            if State.view.GetElementPredicate then
+                State.originalPredicate = State.view:GetElementPredicate()
+            elseif State.view.GetFilterPredicate then
+                State.originalPredicate = State.view:GetFilterPredicate()
+            elseif State.view.GetDataProviderPredicate then
+                State.originalPredicate = State.view:GetDataProviderPredicate()
+            end
+        end
     end
 end
 
@@ -302,9 +304,7 @@ local function EnsureVisibilityWatcher()
 
             State.query = ""
 
-            if State.scrollBox and State.originalProvider and State.scrollBox:GetDataProvider() ~= State.originalProvider then
-                State.scrollBox:SetDataProvider(State.originalProvider, ScrollBoxConstants.RetainScrollPosition)
-            end
+            ApplyFilter()
         end
     end)
 end
@@ -353,6 +353,17 @@ local function TryInstall()
     State.tokenFrame = tokenFrame
     State.scrollBox = scrollBox
     State.originalProvider = provider
+    State.view = GetScrollView(scrollBox)
+
+    if State.view and State.originalPredicate == nil then
+        if State.view.GetElementPredicate then
+            State.originalPredicate = State.view:GetElementPredicate()
+        elseif State.view.GetFilterPredicate then
+            State.originalPredicate = State.view:GetFilterPredicate()
+        elseif State.view.GetDataProviderPredicate then
+            State.originalPredicate = State.view:GetDataProviderPredicate()
+        end
+    end
 
     if not State.searchBox then
         CreateSearchUI(tokenFrame)
