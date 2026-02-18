@@ -211,7 +211,7 @@ local function RefreshOriginalProvider()
 end
 
 local function CreateSearchUI(tokenFrame)
-    local editBox = CreateFrame("EditBox", "WOWCurrencySearchBox", tokenFrame, "InputBoxTemplate")
+    local editBox = CreateFrame("EditBox", nil, tokenFrame, "InputBoxTemplate")
     editBox:SetSize(140, 20)
     editBox:SetPoint("TOPLEFT", tokenFrame, "TOPLEFT", 70, -35)
     editBox:SetAutoFocus(false)
@@ -246,30 +246,6 @@ local function CreateSearchUI(tokenFrame)
     State.clearButton = clearButton
 end
 
-local function HookUpdateHandlers()
-    if type(TokenFrame_Update) == "function" then
-        hooksecurefunc("TokenFrame_Update", function()
-            RefreshOriginalProvider()
-            ApplyFilter()
-        end)
-        return
-    end
-
-    if type(CurrencyFrame_Update) == "function" then
-        hooksecurefunc("CurrencyFrame_Update", function()
-            RefreshOriginalProvider()
-            ApplyFilter()
-        end)
-        return
-    end
-
-    if State.tokenFrame and type(State.tokenFrame.Update) == "function" then
-        hooksecurefunc(State.tokenFrame, "Update", function()
-            RefreshOriginalProvider()
-            ApplyFilter()
-        end)
-    end
-end
 
 local function TryInstall()
     if State.installed or State.installing then
@@ -316,7 +292,6 @@ local function TryInstall()
         CreateSearchUI(tokenFrame)
     end
 
-    HookUpdateHandlers()
 
     tokenFrame:HookScript("OnShow", function()
         RefreshOriginalProvider()
