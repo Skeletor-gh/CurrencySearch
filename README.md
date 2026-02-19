@@ -2,11 +2,13 @@
 
 A lightweight World of Warcraft add-on that adds a search box to the currency pane.
 
+> **Important:** Currency transfer is not currently compatible with CurrencySearch. We're working on a solution; if you need to transfer currency, please disable the addon meanwhile.
+
 ### What this branch now includes
 
 This branch consolidates the latest stability improvements that were added in recent updates:
 
-- Safer filtering behavior while currency transfer mode is active.
+- Currency transfer controls are now proactively blocked while CurrencySearch is loaded to prevent transfer attempts that trigger taint/protected-action issues.
 - Deferred UI/provider mutations during combat lockdown and transfer states.
 - Better Token UI load/install timing to avoid protected-function errors.
 - More resilient transfer-state detection across legacy and newer Token UI APIs.
@@ -16,6 +18,8 @@ This branch consolidates the latest stability improvements that were added in re
 ### Compatibility notes
 
 Currency Search avoids direct frame mutations during sensitive UI states and restores Blizzard's original data provider when needed, which improves coexistence with other add-ons that also interact with the currency frame.
+
+Currency transfer remains blocked in all modes for now due to unresolved compatibility limitations.
 
 Currency Search now stores a mode in `CurrencySearchDB.mode`:
 

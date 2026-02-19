@@ -2,6 +2,7 @@ local ADDON_NAME = ...
 local DEBUG_TRANSFER_DETECTION = false
 local MODE_STRICT = "strict"
 local MODE_COMPAT = "compat"
+local TRANSFER_COMPATIBILITY_WARNING = "Currency transfer is not currently compatible with CurrencySearch. We're working on a solution; please disable the addon if you need to transfer currency meanwhile."
 
 -- Normalize text so matching is accent-insensitive and tolerant of punctuation.
 local function Normalize(text)
@@ -114,7 +115,18 @@ local State = {
     strictModeBlockNoticeShown = false,
     transferAutoDisabled = false,
     transferAutoDisableNoticeShown = false,
+    loginWarningShown = false,
 }
+
+local function ShowCompatibilityWarning()
+    local formatted = string.format("|cffff2020%s: |r|cffff2020%s|r", ADDON_NAME, TRANSFER_COMPATIBILITY_WARNING)
+    if DEFAULT_CHAT_FRAME and DEFAULT_CHAT_FRAME.AddMessage then
+        DEFAULT_CHAT_FRAME:AddMessage(formatted)
+        return
+    end
+
+    print(string.format("%s: %s", ADDON_NAME, TRANSFER_COMPATIBILITY_WARNING))
+end
 
 local function IsInCombat()
     return type(InCombatLockdown) == "function" and InCombatLockdown()
@@ -188,10 +200,59 @@ local function ShowTransferAutoDisableNoticeOnce()
     end
 
     State.transferAutoDisableNoticeShown = true
-    print(string.format(
-        "%s: account currency transfer detected; closing the currency frame and disabling CurrencySearch for this session to avoid taint.",
-        ADDON_NAME
-    ))
+    ShowCompatibilityWarning()
+end
+
+local function DisableTransferButtons(frame)
+    if not frame or not frame.GetChildren then
+        return
+    end
+
+    local function ShouldBlockButton(button)
+        if not button or not button.IsObjectType or not button:IsObjectType("Button") then
+            return false
+        end
+
+        local objectName = Normalize(button.GetName and button:GetName() or "")
+        if objectName:find("transfer", 1, true) or objectName:find("warband", 1, true) then
+            return true
+        end
+
+        if button.GetText then
+            local buttonText = Normalize(button:GetText() or "")
+            if buttonText:find("transfer", 1, true) or buttonText:find("warband", 1, true) then
+                return true
+            end
+        end
+
+        return false
+    end
+
+    local function Visit(current)
+        if not current or not current.GetChildren then
+            return
+        end
+
+        local children = { current:GetChildren() }
+        for _, child in ipairs(children) do
+            if ShouldBlockButton(child) and child.Disable then
+                child:Disable()
+                if not child.CurrencySearchTransferBlocked then
+                    child.CurrencySearchTransferBlocked = true
+                    child:HookScript("OnClick", function(self)
+                        if self.Enable then
+                            self:Disable()
+                        end
+                        ShowCompatibilityWarning()
+                    end)
+                end
+            end
+
+            Visit(child)
+        end
+    end
+
+    Visit(frame)
 end
 
 local function UpdateMutationPauseState(isPaused)
@@ -634,6 +695,7 @@ local function EnsureVisibilityWatcher()
         local isShown = State.tokenFrame.IsShown and State.tokenFrame:IsShown()
         if isShown and not State.tokenFrameWasShown then
             State.tokenFrameWasShown = true
+            DisableTransferButtons(State.tokenFrame)
             RefreshOriginalProvider()
             ApplyFilter()
             return
@@ -717,6 +779,8 @@ local function TryInstall()
     State.scrollBox = scrollBox
     State.originalProvider = provider
 
+    DisableTransferButtons(tokenFrame)
+
     EnsureVisibilityWatcher()
     State.tokenFrameWasShown = tokenFrame:IsShown()
 
@@ -790,6 +854,7 @@ end
 
 eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("ADDON_LOADED")
+eventFrame:RegisterEvent("PLAYER_LOGIN")
 eventFrame:RegisterEvent("CURRENCY_DISPLAY_UPDATE")
 eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 
@@ -812,6 +877,14 @@ eventFrame:SetScript("OnEvent", function(_, event, name)
             if Normalize(State.query) ~= "" then
                 ApplyFilter()
             end
+        end
+        return
+    end
+
+    if event == "PLAYER_LOGIN" then
+        if not State.loginWarningShown then
+            State.loginWarningShown = true
+            ShowCompatibilityWarning()
         end
         return
     end
