@@ -66,7 +66,7 @@ local function getCurrencyInfoForButton(button)
     end
 
     if C_CurrencyInfo and C_CurrencyInfo.GetCurrencyListInfo then
-        local index = button.index or button.currencyIndex or button.dataIndex
+        local index = button.index or button.currencyIndex or button.dataIndex or (button.GetID and button:GetID())
         if not index and data then
             index = data.index or data.currencyIndex or data.listIndex
         end
@@ -142,15 +142,49 @@ function CurrencySearch:GetRootFrame()
 end
 
 function CurrencySearch:CollectCurrencyButtons()
+    local result = {}
+
     if TokenFrameContainer and TokenFrameContainer.buttons then
-        return TokenFrameContainer.buttons
+        for _, button in ipairs(TokenFrameContainer.buttons) do
+            if button and button.IsObjectType and button:IsObjectType("Button") then
+                result[#result + 1] = button
+            end
+        end
     end
 
     if CurrencyFrame and CurrencyFrame.Container and CurrencyFrame.Container.buttons then
-        return CurrencyFrame.Container.buttons
+        for _, button in ipairs(CurrencyFrame.Container.buttons) do
+            if button and button.IsObjectType and button:IsObjectType("Button") then
+                result[#result + 1] = button
+            end
+        end
     end
 
-    return {}
+    if #result > 0 then
+        return result
+    end
+
+    local root = self:GetRootFrame()
+    if not root then
+        return result
+    end
+
+    local stack = { root }
+    while #stack > 0 do
+        local node = table.remove(stack)
+        for _, child in ipairs({ node:GetChildren() }) do
+            stack[#stack + 1] = child
+            if child and child.IsObjectType and child:IsObjectType("Button") then
+                local info = getCurrencyInfoForButton(child)
+                local name = getCurrencyLabel(child)
+                if (info and (info.name or info.isHeader ~= nil)) or (name and name ~= "") then
+                    result[#result + 1] = child
+                end
+            end
+        end
+    end
+
+    return result
 end
 
 function CurrencySearch:ApplyFilter()
@@ -165,16 +199,23 @@ function CurrencySearch:ApplyFilter()
     local hasQuery = query ~= ""
 
     for _, button in ipairs(self:CollectCurrencyButtons()) do
-        if not enabled or not hasQuery then
-            button:SetShown(true)
-        else
-            local rowName = lower(getCurrencyLabel(button) or "")
-            local show = isHeaderRow(button) or (rowName ~= "" and contains(rowName, query))
-            button:SetShown(show)
+        if button then
+            if not enabled or not hasQuery then
+                button:Show()
+            else
+                local rowName = lower(getCurrencyLabel(button) or "")
+                local show = isHeaderRow(button) or (rowName ~= "" and contains(rowName, query))
+                if show then
+                    button:Show()
+                else
+                    button:Hide()
+                end
+            end
         end
     end
 
     self._isApplying = false
+
 end
 
 function CurrencySearch:RefreshIfVisible()
