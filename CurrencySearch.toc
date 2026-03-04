@@ -1,4 +1,4 @@
-## Interface: 120000
+## Interface: 120001
 ## Title: CurrencySearch
 ## Notes: Adds a simple currency search box to the default currency pane.
 ## Author: Skeletor-gh
