@@ -6,6 +6,8 @@ CurrencySearch.searchBox = nil
 CurrencySearch.currentQuery = ""
 CurrencySearch._isApplying = false
 CurrencySearch._didHookRefreshTargets = false
+CurrencySearch._didFlattenHeaders = false
+CurrencySearch._savedHeaderStates = nil
 
 local function trim(text)
     if not text then
@@ -124,6 +126,71 @@ local function getCurrencyInfoForButton(button)
     end
 
     return nil
+end
+
+local function getCurrencyListIndex(button, info)
+    local data = getButtonData(button)
+
+    if info then
+        if info.index then
+            return info.index
+        end
+
+        if info.currencyIndex then
+            return info.currencyIndex
+        end
+
+        if info.listIndex then
+            return info.listIndex
+        end
+    end
+
+    if data then
+        if data.index then
+            return data.index
+        end
+
+        if data.currencyIndex then
+            return data.currencyIndex
+        end
+
+        if data.listIndex then
+            return data.listIndex
+        end
+    end
+
+    return button and (button.index or button.currencyIndex or button.dataIndex or (button.GetID and button:GetID())) or nil
+end
+
+local function isHeaderExpanded(info)
+    if not info then
+        return nil
+    end
+
+    if info.isHeaderExpanded ~= nil then
+        return info.isHeaderExpanded
+    end
+
+    if info.isExpanded ~= nil then
+        return info.isExpanded
+    end
+
+    return nil
+end
+
+local function setHeaderExpanded(index, shouldExpand)
+    if not index then
+        return
+    end
+
+    if C_CurrencyInfo and C_CurrencyInfo.ExpandCurrencyList then
+        pcall(C_CurrencyInfo.ExpandCurrencyList, index, shouldExpand)
+        return
+    end
+
+    if ExpandCurrencyList then
+        pcall(ExpandCurrencyList, index, shouldExpand and 1 or 0)
+    end
 end
 
 local function getCurrencyLabel(button)
@@ -247,13 +314,46 @@ function CurrencySearch:ApplyFilter()
 
     local buttons = self:CollectCurrencyButtons()
 
+    if enabled and hasQuery then
+        if not self._didFlattenHeaders then
+            self._savedHeaderStates = {}
+            for _, button in ipairs(buttons) do
+                local info = getCurrencyInfoForButton(button)
+                if isHeaderRow(button) then
+                    local index = getCurrencyListIndex(button, info)
+                    local expanded = isHeaderExpanded(info)
+                    if index and expanded ~= nil and self._savedHeaderStates[index] == nil then
+                        self._savedHeaderStates[index] = expanded
+                    end
+
+                    if index and expanded == false then
+                        setHeaderExpanded(index, true)
+                    end
+                end
+            end
+
+            self._didFlattenHeaders = true
+            buttons = self:CollectCurrencyButtons()
+        end
+    elseif self._didFlattenHeaders then
+        if self._savedHeaderStates then
+            for index, expanded in pairs(self._savedHeaderStates) do
+                setHeaderExpanded(index, expanded)
+            end
+        end
+
+        self._savedHeaderStates = nil
+        self._didFlattenHeaders = false
+        buttons = self:CollectCurrencyButtons()
+    end
+
     for _, button in ipairs(buttons) do
         if button then
             if not enabled or not hasQuery then
                 button:Show()
             else
                 local rowName = lower(getCurrencyLabel(button) or "")
-                local show = isHeaderRow(button) or matchesQuery(rowName, query)
+                local show = (not isHeaderRow(button)) and matchesQuery(rowName, query)
                 if show then
                     button:Show()
                 else
@@ -321,6 +421,14 @@ function CurrencySearch:SetEnabled(enabled)
     self.db.enabled = enabled and true or false
 
     if not self.db.enabled then
+        if self._didFlattenHeaders and self._savedHeaderStates then
+            for index, expanded in pairs(self._savedHeaderStates) do
+                setHeaderExpanded(index, expanded)
+            end
+        end
+
+        self._savedHeaderStates = nil
+        self._didFlattenHeaders = false
         self.currentQuery = ""
         if self.searchBox then
             self.searchBox:SetText("")
