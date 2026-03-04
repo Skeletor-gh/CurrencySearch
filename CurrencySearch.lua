@@ -23,6 +23,52 @@ local function contains(haystack, needle)
     return string.find(haystack, needle, 1, true) ~= nil
 end
 
+local function tokenize(text)
+    local tokens = {}
+    for token in string.gmatch(text or "", "%S+") do
+        tokens[#tokens + 1] = token
+    end
+
+    return tokens
+end
+
+local function startsWith(text, prefix)
+    return prefix ~= "" and string.sub(text, 1, string.len(prefix)) == prefix
+end
+
+local function matchesQuery(rowName, query)
+    if rowName == "" or query == "" then
+        return false
+    end
+
+    if contains(rowName, query) then
+        return true
+    end
+
+    local rowWords = tokenize(rowName)
+    local queryWords = tokenize(query)
+
+    if #queryWords == 0 then
+        return false
+    end
+
+    for _, queryWord in ipairs(queryWords) do
+        local matchedWord = false
+        for _, rowWord in ipairs(rowWords) do
+            if startsWith(rowWord, queryWord) or contains(rowWord, queryWord) then
+                matchedWord = true
+                break
+            end
+        end
+
+        if not matchedWord then
+            return false
+        end
+    end
+
+    return true
+end
+
 local function getButtonData(button)
     if not button then
         return nil
@@ -203,13 +249,11 @@ function CurrencySearch:ApplyFilter()
 
     for _, button in ipairs(buttons) do
         if button then
-            self:StoreButtonAnchors(button)
-
             if not enabled or not hasQuery then
                 button:Show()
             else
                 local rowName = lower(getCurrencyLabel(button) or "")
-                local show = isHeaderRow(button) or (rowName ~= "" and contains(rowName, query))
+                local show = isHeaderRow(button) or matchesQuery(rowName, query)
                 if show then
                     button:Show()
                 else
@@ -219,71 +263,8 @@ function CurrencySearch:ApplyFilter()
         end
     end
 
-    if enabled and hasQuery then
-        self:CondenseVisibleButtons(buttons)
-    else
-        self:RestoreButtonAnchors(buttons)
-    end
-
     self._isApplying = false
 
-end
-
-function CurrencySearch:CondenseVisibleButtons(buttons)
-    if not buttons then
-        return
-    end
-
-    local firstShown = nil
-    local previousShown = nil
-
-    for _, button in ipairs(buttons) do
-        if button and button:IsShown() then
-            if not firstShown then
-                firstShown = button
-                previousShown = button
-            else
-                button:ClearAllPoints()
-                button:SetPoint("TOPLEFT", previousShown, "BOTTOMLEFT", 0, 0)
-                button:SetPoint("TOPRIGHT", previousShown, "BOTTOMRIGHT", 0, 0)
-                previousShown = button
-            end
-        end
-    end
-end
-
-function CurrencySearch:RestoreButtonAnchors(buttons)
-    if not buttons then
-        return
-    end
-
-    for _, button in ipairs(buttons) do
-        if button and button._currencySearchOriginalAnchors then
-            button:ClearAllPoints()
-            for _, anchor in ipairs(button._currencySearchOriginalAnchors) do
-                button:SetPoint(anchor.point, anchor.relativeTo, anchor.relativePoint, anchor.xOfs, anchor.yOfs)
-            end
-        end
-    end
-end
-
-function CurrencySearch:StoreButtonAnchors(button)
-    if not button or button._currencySearchOriginalAnchors then
-        return
-    end
-
-    button._currencySearchOriginalAnchors = {}
-    local numPoints = button.GetNumPoints and button:GetNumPoints() or 0
-    for i = 1, numPoints do
-        local point, relativeTo, relativePoint, xOfs, yOfs = button:GetPoint(i)
-        button._currencySearchOriginalAnchors[#button._currencySearchOriginalAnchors + 1] = {
-            point = point,
-            relativeTo = relativeTo,
-            relativePoint = relativePoint,
-            xOfs = xOfs,
-            yOfs = yOfs,
-        }
-    end
 end
 
 function CurrencySearch:HookRefreshTargets()
