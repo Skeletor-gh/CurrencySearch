@@ -5,6 +5,7 @@ CurrencySearch.db = nil
 CurrencySearch.searchBox = nil
 CurrencySearch.currentQuery = ""
 CurrencySearch._isApplying = false
+CurrencySearch._didHookRefreshTargets = false
 
 local function trim(text)
     if not text then
@@ -198,7 +199,9 @@ function CurrencySearch:ApplyFilter()
     local query = lower(trim(self.currentQuery))
     local hasQuery = query ~= ""
 
-    for _, button in ipairs(self:CollectCurrencyButtons()) do
+    local buttons = self:CollectCurrencyButtons()
+
+    for _, button in ipairs(buttons) do
         if button then
             if not enabled or not hasQuery then
                 button:Show()
@@ -214,8 +217,84 @@ function CurrencySearch:ApplyFilter()
         end
     end
 
+    self:CondenseVisibleButtons(buttons)
+
     self._isApplying = false
 
+end
+
+function CurrencySearch:CondenseVisibleButtons(buttons)
+    if not buttons then
+        return
+    end
+
+    local firstShown = nil
+    local previousShown = nil
+
+    for _, button in ipairs(buttons) do
+        if button and button:IsShown() then
+            if not firstShown then
+                firstShown = button
+                previousShown = button
+            else
+                button:ClearAllPoints()
+                button:SetPoint("TOPLEFT", previousShown, "BOTTOMLEFT", 0, 0)
+                button:SetPoint("TOPRIGHT", previousShown, "BOTTOMRIGHT", 0, 0)
+                previousShown = button
+            end
+        end
+    end
+end
+
+function CurrencySearch:HookRefreshTargets()
+    if self._didHookRefreshTargets then
+        return
+    end
+
+    local function hookRegion(region)
+        if not region then
+            return
+        end
+
+        if region.HookScript then
+            if region:GetScript("OnVerticalScroll") then
+                region:HookScript("OnVerticalScroll", function()
+                    CurrencySearch:RefreshIfVisible()
+                end)
+            end
+
+            if region:GetScript("OnValueChanged") then
+                region:HookScript("OnValueChanged", function()
+                    CurrencySearch:RefreshIfVisible()
+                end)
+            end
+
+            if region:GetScript("OnMouseWheel") then
+                region:HookScript("OnMouseWheel", function()
+                    CurrencySearch:RefreshIfVisible()
+                end)
+            end
+        end
+
+        if region.ScrollBar then
+            hookRegion(region.ScrollBar)
+        end
+
+        if region.scrollBar then
+            hookRegion(region.scrollBar)
+        end
+    end
+
+    hookRegion(TokenFrameContainer)
+    if TokenFrame and TokenFrame.ScrollBar then
+        hookRegion(TokenFrame.ScrollBar)
+    end
+
+    if CurrencyFrame and CurrencyFrame.Container then
+        hookRegion(CurrencyFrame.Container)
+    end
+
+    self._didHookRefreshTargets = true
 end
 
 function CurrencySearch:RefreshIfVisible()
@@ -335,6 +414,7 @@ function CurrencySearch:OnEvent(event, arg1)
     if event == "PLAYER_LOGIN" then
         self:CreateSearchBox()
         self:InitializeSlashCommands()
+        self:HookRefreshTargets()
 
         self:RegisterEvent("CURRENCY_DISPLAY_UPDATE")
         self:RegisterEvent("PLAYER_MONEY")
