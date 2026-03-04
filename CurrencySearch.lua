@@ -243,6 +243,19 @@ local function isHeaderRow(button)
     return false
 end
 
+local function isFilterableCurrencyRow(button)
+    local info = getCurrencyInfoForButton(button)
+    if not info then
+        return false
+    end
+
+    if info.isHeader then
+        return false
+    end
+
+    return info.name ~= nil
+end
+
 function CurrencySearch:GetRootFrame()
     if TokenFrame and TokenFrame:IsObjectType("Frame") then
         return TokenFrame
@@ -352,12 +365,16 @@ function CurrencySearch:ApplyFilter()
             if not enabled or not hasQuery then
                 button:Show()
             else
-                local rowName = lower(getCurrencyLabel(button) or "")
-                local show = (not isHeaderRow(button)) and matchesQuery(rowName, query)
-                if show then
+                if not isFilterableCurrencyRow(button) then
                     button:Show()
                 else
-                    button:Hide()
+                    local rowName = lower(getCurrencyLabel(button) or "")
+                    local show = matchesQuery(rowName, query)
+                    if show then
+                        button:Show()
+                    else
+                        button:Hide()
+                    end
                 end
             end
         end
@@ -365,6 +382,24 @@ function CurrencySearch:ApplyFilter()
 
     self._isApplying = false
 
+end
+
+function CurrencySearch:ClearFilter(clearSearchText)
+    self.currentQuery = ""
+
+    if clearSearchText and self.searchBox and self.searchBox:GetText() ~= "" then
+        self.searchBox:SetText("")
+    end
+
+    self:ApplyFilter()
+end
+
+function CurrencySearch:HandleCurrencyTabClosed()
+    self:ClearFilter(true)
+end
+
+function CurrencySearch:HandleSearchCleared()
+    self:ClearFilter(false)
 end
 
 function CurrencySearch:HookRefreshTargets()
@@ -429,10 +464,7 @@ function CurrencySearch:SetEnabled(enabled)
 
         self._savedHeaderStates = nil
         self._didFlattenHeaders = false
-        self.currentQuery = ""
-        if self.searchBox then
-            self.searchBox:SetText("")
-        end
+        self:ClearFilter(true)
     end
 
     self:RefreshIfVisible()
@@ -472,8 +504,7 @@ function CurrencySearch:CreateSearchBox()
     local clearButton = searchBox.ClearButton
     if clearButton then
         clearButton:HookScript("OnClick", function()
-            CurrencySearch.currentQuery = ""
-            CurrencySearch:ApplyFilter()
+            CurrencySearch:HandleSearchCleared()
         end)
     end
 
@@ -546,6 +577,10 @@ function CurrencySearch:OnEvent(event, arg1)
                 CurrencySearch:UpdateSearchBoxVisibility()
                 CurrencySearch:RefreshIfVisible()
             end)
+
+            TokenFrame:HookScript("OnHide", function()
+                CurrencySearch:HandleCurrencyTabClosed()
+            end)
         end
 
         if CurrencyFrame then
@@ -553,6 +588,10 @@ function CurrencySearch:OnEvent(event, arg1)
                 CurrencySearch:CreateSearchBox()
                 CurrencySearch:UpdateSearchBoxVisibility()
                 CurrencySearch:RefreshIfVisible()
+            end)
+
+            CurrencyFrame:HookScript("OnHide", function()
+                CurrencySearch:HandleCurrencyTabClosed()
             end)
         end
 
