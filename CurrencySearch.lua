@@ -203,6 +203,8 @@ function CurrencySearch:ApplyFilter()
 
     for _, button in ipairs(buttons) do
         if button then
+            self:StoreButtonAnchors(button)
+
             if not enabled or not hasQuery then
                 button:Show()
             else
@@ -217,7 +219,11 @@ function CurrencySearch:ApplyFilter()
         end
     end
 
-    self:CondenseVisibleButtons(buttons)
+    if enabled and hasQuery then
+        self:CondenseVisibleButtons(buttons)
+    else
+        self:RestoreButtonAnchors(buttons)
+    end
 
     self._isApplying = false
 
@@ -246,6 +252,40 @@ function CurrencySearch:CondenseVisibleButtons(buttons)
     end
 end
 
+function CurrencySearch:RestoreButtonAnchors(buttons)
+    if not buttons then
+        return
+    end
+
+    for _, button in ipairs(buttons) do
+        if button and button._currencySearchOriginalAnchors then
+            button:ClearAllPoints()
+            for _, anchor in ipairs(button._currencySearchOriginalAnchors) do
+                button:SetPoint(anchor.point, anchor.relativeTo, anchor.relativePoint, anchor.xOfs, anchor.yOfs)
+            end
+        end
+    end
+end
+
+function CurrencySearch:StoreButtonAnchors(button)
+    if not button or button._currencySearchOriginalAnchors then
+        return
+    end
+
+    button._currencySearchOriginalAnchors = {}
+    local numPoints = button.GetNumPoints and button:GetNumPoints() or 0
+    for i = 1, numPoints do
+        local point, relativeTo, relativePoint, xOfs, yOfs = button:GetPoint(i)
+        button._currencySearchOriginalAnchors[#button._currencySearchOriginalAnchors + 1] = {
+            point = point,
+            relativeTo = relativeTo,
+            relativePoint = relativePoint,
+            xOfs = xOfs,
+            yOfs = yOfs,
+        }
+    end
+end
+
 function CurrencySearch:HookRefreshTargets()
     if self._didHookRefreshTargets then
         return
@@ -257,23 +297,15 @@ function CurrencySearch:HookRefreshTargets()
         end
 
         if region.HookScript then
-            if region:GetScript("OnVerticalScroll") then
-                region:HookScript("OnVerticalScroll", function()
+            local function safeHook(scriptName)
+                pcall(region.HookScript, region, scriptName, function()
                     CurrencySearch:RefreshIfVisible()
                 end)
             end
 
-            if region:GetScript("OnValueChanged") then
-                region:HookScript("OnValueChanged", function()
-                    CurrencySearch:RefreshIfVisible()
-                end)
-            end
-
-            if region:GetScript("OnMouseWheel") then
-                region:HookScript("OnMouseWheel", function()
-                    CurrencySearch:RefreshIfVisible()
-                end)
-            end
+            safeHook("OnVerticalScroll")
+            safeHook("OnValueChanged")
+            safeHook("OnMouseWheel")
         end
 
         if region.ScrollBar then
