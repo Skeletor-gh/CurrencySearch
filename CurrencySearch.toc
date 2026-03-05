@@ -2,7 +2,7 @@
 ## Title: CurrencySearch
 ## Notes: Adds a simple currency search box to the default currency pane.
 ## Author: Skeletor-gh
-## Version: 1.0
+## Version: 1.0.1
 ## LoadOnDemand: 0
 ## SavedVariables: CurrencySearchDB
 ## X-Category: Skeletor

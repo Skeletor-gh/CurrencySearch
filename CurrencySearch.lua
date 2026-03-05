@@ -259,6 +259,27 @@ local function isFilterableCurrencyRow(button)
     return label ~= nil and trim(label) ~= ""
 end
 
+local function isProtectedUtilityButton(button)
+    if not button then
+        return false
+    end
+
+    local objectName = button.GetName and button:GetName() or nil
+    if objectName and string.find(objectName, "Transfer", 1, true) then
+        return true
+    end
+
+    local data = getButtonData(button)
+    if data then
+        local dataType = data.entryType or data.type or data.buttonType
+        if dataType == "transfer" or dataType == "transferLog" then
+            return true
+        end
+    end
+
+    return false
+end
+
 function CurrencySearch:HookRowButtons(buttons)
     for _, button in ipairs(buttons) do
         if button and not button._currencySearchHooked and button.HookScript then
@@ -319,8 +340,7 @@ function CurrencySearch:CollectCurrencyButtons()
             stack[#stack + 1] = child
             if child and child.IsObjectType and child:IsObjectType("Button") then
                 local info = getCurrencyInfoForButton(child)
-                local name = getCurrencyLabel(child)
-                if (info and (info.name or info.isHeader ~= nil)) or (name and name ~= "") then
+                if info and (info.name or info.isHeader ~= nil) then
                     result[#result + 1] = child
                 end
             end
@@ -382,7 +402,9 @@ function CurrencySearch:ApplyFilter()
             if not enabled or not hasQuery then
                 button:Show()
             else
-                if isHeaderRow(button) then
+                if isProtectedUtilityButton(button) then
+                    button:Show()
+                elseif isHeaderRow(button) then
                     button:Hide()
                 else
                     local rowName = lower(getCurrencyLabel(button) or "")
