@@ -8,6 +8,7 @@ CurrencySearch._isApplying = false
 CurrencySearch._didHookRefreshTargets = false
 CurrencySearch._didFlattenHeaders = false
 CurrencySearch._savedHeaderStates = nil
+CurrencySearch._didRegisterRuntimeEvents = false
 
 local function trim(text)
     if not text then
@@ -447,6 +448,52 @@ function CurrencySearch:HookRefreshTargets()
     self._didHookRefreshTargets = true
 end
 
+function CurrencySearch:RegisterRuntimeEvents()
+    if self._didRegisterRuntimeEvents then
+        return
+    end
+
+    self:RegisterEvent("CURRENCY_DISPLAY_UPDATE")
+    self:RegisterEvent("PLAYER_MONEY")
+    self:RegisterEvent("CURRENCY_TRANSFER_LOG_UPDATE")
+    self._didRegisterRuntimeEvents = true
+end
+
+function CurrencySearch:TryInitializeUIBindings()
+    self:CreateSearchBox()
+    self:InitializeSlashCommands()
+    self:HookRefreshTargets()
+    self:RegisterRuntimeEvents()
+
+    if TokenFrame and not self._tokenFrameHooksAdded then
+        TokenFrame:HookScript("OnShow", function()
+            CurrencySearch:CreateSearchBox()
+            CurrencySearch:UpdateSearchBoxVisibility()
+            CurrencySearch:RefreshIfVisible()
+        end)
+
+        TokenFrame:HookScript("OnHide", function()
+            CurrencySearch:HandleCurrencyTabClosed()
+        end)
+
+        self._tokenFrameHooksAdded = true
+    end
+
+    if CurrencyFrame and not self._currencyFrameHooksAdded then
+        CurrencyFrame:HookScript("OnShow", function()
+            CurrencySearch:CreateSearchBox()
+            CurrencySearch:UpdateSearchBoxVisibility()
+            CurrencySearch:RefreshIfVisible()
+        end)
+
+        CurrencyFrame:HookScript("OnHide", function()
+            CurrencySearch:HandleCurrencyTabClosed()
+        end)
+
+        self._currencyFrameHooksAdded = true
+    end
+end
+
 function CurrencySearch:RefreshIfVisible()
     local root = self:GetRootFrame()
     if root and root:IsShown() then
@@ -549,6 +596,11 @@ end
 
 function CurrencySearch:OnEvent(event, arg1)
     if event == "ADDON_LOADED" then
+        if arg1 == "Blizzard_TokenUI" then
+            self:TryInitializeUIBindings()
+            return
+        end
+
         if arg1 ~= ADDON_NAME then
             return
         end
@@ -566,35 +618,11 @@ function CurrencySearch:OnEvent(event, arg1)
     end
 
     if event == "PLAYER_LOGIN" then
-        self:CreateSearchBox()
-        self:InitializeSlashCommands()
-        self:HookRefreshTargets()
+        self:TryInitializeUIBindings()
 
-        self:RegisterEvent("CURRENCY_DISPLAY_UPDATE")
-        self:RegisterEvent("PLAYER_MONEY")
-
-        if TokenFrame then
-            TokenFrame:HookScript("OnShow", function()
-                CurrencySearch:CreateSearchBox()
-                CurrencySearch:UpdateSearchBoxVisibility()
-                CurrencySearch:RefreshIfVisible()
-            end)
-
-            TokenFrame:HookScript("OnHide", function()
-                CurrencySearch:HandleCurrencyTabClosed()
-            end)
-        end
-
-        if CurrencyFrame then
-            CurrencyFrame:HookScript("OnShow", function()
-                CurrencySearch:CreateSearchBox()
-                CurrencySearch:UpdateSearchBoxVisibility()
-                CurrencySearch:RefreshIfVisible()
-            end)
-
-            CurrencyFrame:HookScript("OnHide", function()
-                CurrencySearch:HandleCurrencyTabClosed()
-            end)
+        if not TokenFrame and not CurrencyFrame then
+            self:RegisterEvent("ADDON_LOADED")
+            UIParentLoadAddOn("Blizzard_TokenUI")
         end
 
         if TokenFrame_Update then
@@ -605,8 +633,7 @@ function CurrencySearch:OnEvent(event, arg1)
 
         return
     end
-
-    if event == "CURRENCY_DISPLAY_UPDATE" or event == "PLAYER_MONEY" then
+    if event == "CURRENCY_DISPLAY_UPDATE" or event == "PLAYER_MONEY" or event == "CURRENCY_TRANSFER_LOG_UPDATE" then
         self:RefreshIfVisible()
     end
 end
