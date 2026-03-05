@@ -9,6 +9,7 @@ CurrencySearch._didHookRefreshTargets = false
 CurrencySearch._didFlattenHeaders = false
 CurrencySearch._savedHeaderStates = nil
 CurrencySearch._didRegisterRuntimeEvents = false
+CurrencySearch._didHookRowButtons = false
 
 local function trim(text)
     if not text then
@@ -245,16 +246,30 @@ local function isHeaderRow(button)
 end
 
 local function isFilterableCurrencyRow(button)
+    if isHeaderRow(button) then
+        return false
+    end
+
     local info = getCurrencyInfoForButton(button)
-    if not info then
-        return false
+    if info and info.name ~= nil then
+        return true
     end
 
-    if info.isHeader then
-        return false
+    local label = getCurrencyLabel(button)
+    return label ~= nil and trim(label) ~= ""
+end
+
+function CurrencySearch:HookRowButtons(buttons)
+    for _, button in ipairs(buttons) do
+        if button and not button._currencySearchHooked and button.HookScript then
+            button:HookScript("OnShow", function()
+                CurrencySearch:RefreshIfVisible()
+            end)
+            button._currencySearchHooked = true
+        end
     end
 
-    return info.name ~= nil
+    self._didHookRowButtons = true
 end
 
 function CurrencySearch:GetRootFrame()
@@ -327,6 +342,7 @@ function CurrencySearch:ApplyFilter()
     local hasQuery = query ~= ""
 
     local buttons = self:CollectCurrencyButtons()
+    self:HookRowButtons(buttons)
 
     if enabled and hasQuery then
         if not self._didFlattenHeaders then
@@ -368,11 +384,9 @@ function CurrencySearch:ApplyFilter()
             else
                 if isHeaderRow(button) then
                     button:Hide()
-                elseif not isFilterableCurrencyRow(button) then
-                    button:Show()
                 else
                     local rowName = lower(getCurrencyLabel(button) or "")
-                    local show = matchesQuery(rowName, query)
+                    local show = isFilterableCurrencyRow(button) and matchesQuery(rowName, query)
                     if show then
                         button:Show()
                     else
